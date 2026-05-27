@@ -1,0 +1,108 @@
+"""
+Pipeline de ingestão de dados para o projeto de RAG (Retrieval-Augmented Generation)
+- Ler os docs do knowledge base
+- Divisão de chunks
+- Gerar embeddings e armazenar no ChromaDB
+
+execução: python -m src.rag.ingestion
+"""
+
+import os
+import chromadb
+from pypdf import PdfReader
+from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+
+# ── Configurações ─────────────────────────────────────────────────────────────
+KNOWLEDGE_BASE_DIR = "knowledge_base"
+CHROMA_DB_PATH     = "data/chroma_db"
+COLLECTION_NAME    = "compliance_docs"
+CHUNK_SIZE         = 500   # Tamanho de cada chunk em caracteres
+CHUNK_OVERLAP      = 50    # Sobreposição entre chunks para preservar contexto
+EMBEDDING_MODEL    = "all-MiniLM-L6-v2"  # Modelo leve e eficiente para embeddings
+
+
+def extract_text_from_pdf(pdf_path: str) -> str:
+    """
+    Extrai o texto bruto de um arquivo PDF página por página.
+    Retorna o texto completo concatenado.
+    """
+    reader = PdfReader(pdf_path)
+    text = ""
+    for page in reader.pages:
+        page_text = page.extract_text()
+        if page_text:
+            text += page_text + "\n"
+    return text
+
+
+def split_into_chunks(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
+    """
+    Divide o texto em chunks com sobreposição.
+    A sobreposição garante que o contexto não seja perdido nas bordas dos chunks.
+    """
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = start + chunk_size
+        chunks.append(text[start:end].strip())
+        start += chunk_size - overlap
+    return [c for c in chunks if c]  # Remove chunks vazios
+
+
+def ingest_documents():
+    """
+    Fluxo principal de ingestão:
+    1. Lê todos os PDFs da knowledge_base/
+    2. Extrai e divide o texto em chunks
+    3. Armazena no ChromaDB com metadados de rastreabilidade
+    """
+    # Inicializa o cliente ChromaDB persistente
+    client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
+
+    # Usa SentenceTransformer para gerar embeddings localmente
+    embedding_fn = SentenceTransformerEmbeddingFunction(model_name=EMBEDDING_MODEL)
+
+    # Cria ou recupera a collection — operação idempotente
+    collection = client.get_or_create_collection(
+        name=COLLECTION_NAME,
+        embedding_function=embedding_fn,
+    )
+
+    # Processa cada PDF da knowledge_base/
+    pdf_files = [f for f in os.listdir(KNOWLEDGE_BASE_DIR) if f.endswith(".pdf")]
+
+    if not pdf_files:
+        print("Nenhum PDF encontrado na knowledge_base/.")
+        return
+
+    for pdf_file in pdf_files:
+        pdf_path = os.path.join(KNOWLEDGE_BASE_DIR, pdf_file)
+        print(f"Processando: {pdf_file}")
+
+        # Extrai texto do PDF
+        text = extract_text_from_pdf(pdf_path)
+        if not text.strip():
+            print(f"  ⚠️ Nenhum texto extraído de {pdf_file}. Pulando.")
+            continue
+
+        # Divide em chunks
+        chunks = split_into_chunks(text)
+        print(f"  {len(chunks)} chunks gerados.")
+
+        # Prepara os dados para inserção no ChromaDB
+        ids       = [f"{pdf_file}_chunk_{i}" for i in range(len(chunks))]
+        metadatas = [{"source": pdf_file, "chunk_index": i} for i in range(len(chunks))]
+
+        # Insere no ChromaDB — upsert evita duplicatas em re-execuções
+        collection.upsert(
+            ids=ids,
+            documents=chunks,
+            metadatas=metadatas,
+        )
+        print(f" Aeee!🎆 {pdf_file} indexado com sucesso.")
+
+    print(f"\nIngestão concluída. Total de documentos na collection: {collection.count()}")
+
+
+if __name__ == "__main__":
+    ingest_documents
