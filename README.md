@@ -1,4 +1,4 @@
-# 🔍 Compliance Viewer — Projeto 1
+# 🔍 Compliance Viewer
 
 Serviço especialista de análise automatizada de recomendações de investimento, simulando um analista de compliance financeiro com uso de LLM (Azure OpenAI).
 
