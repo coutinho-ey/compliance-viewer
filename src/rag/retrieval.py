@@ -83,7 +83,7 @@ def rerank_chunks(query: str, chunks: list[dict]) -> list[dict]:
 
         semantic_score = 1 - chunk['distance']  # distancia menor, score maior
 
-        chunk['score_final'] = 0.6 * term_score + 0.4 * semantic_score # 60% semantico, 40% lexical
+        chunk['score_final'] = 0.6 * semantic_score + 0.4 * term_score # 60% semantico, 40% lexical
     
     return sorted(chunks, key=lambda x: x['score_final'], reverse=True)
 

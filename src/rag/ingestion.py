@@ -35,6 +35,15 @@ def extract_text_from_pdf(pdf_path: str) -> str:
     return text
 
 
+def extract_text_from_txt(txt_path: str) -> str:
+    """
+    Lê o conteúdo bruto de um arquivo TXT.
+    Retorna o texto completo.
+    """
+    with open(txt_path, "r", encoding="utf-8") as f:
+        return f.read()
+
+
 def split_into_chunks(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
     """
     Divide o texto em chunks com sobreposição.
@@ -52,7 +61,7 @@ def split_into_chunks(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CH
 def ingest_documents():
     """
     Fluxo principal de ingestão:
-    1. Lê todos os PDFs da knowledge_base/
+    1. Lê todos os PDFs e TXTs da knowledge_base/
     2. Extrai e divide o texto em chunks
     3. Armazena no ChromaDB com metadados de rastreabilidade
     """
@@ -68,21 +77,22 @@ def ingest_documents():
         embedding_function=embedding_fn,
     )
 
-    # Processa cada PDF da knowledge_base/
-    pdf_files = [f for f in os.listdir(KNOWLEDGE_BASE_DIR) if f.endswith(".pdf")]
+    # Processa cada arquivo da knowledge_base/
+    files = [f for f in os.listdir(KNOWLEDGE_BASE_DIR) if f.endswith(".pdf") or f.endswith(".txt")]
 
-    if not pdf_files:
-        print("Nenhum PDF encontrado na knowledge_base/.")
+    if not files:
+        print("Nenhum arquivo encontrado na knowledge_base/.")
         return
 
-    for pdf_file in pdf_files:
-        pdf_path = os.path.join(KNOWLEDGE_BASE_DIR, pdf_file)
-        print(f"Processando: {pdf_file}")
+    for file in files:
+        file_path = os.path.join(KNOWLEDGE_BASE_DIR, file)
+        print(f"Processando: {file}")
 
-        # Extrai texto do PDF
-        text = extract_text_from_pdf(pdf_path)
+        # Extrai texto de acordo com o tipo de arquivo
+        text = extract_text_from_pdf(file_path) if file.endswith(".pdf") else extract_text_from_txt(file_path)
+
         if not text.strip():
-            print(f"  ⚠️ Nenhum texto extraído de {pdf_file}. Pulando.")
+            print(f"  ⚠️ Nenhum texto extraído de {file}. Pulando.")
             continue
 
         # Divide em chunks
@@ -90,8 +100,8 @@ def ingest_documents():
         print(f"  {len(chunks)} chunks gerados.")
 
         # Prepara os dados para inserção no ChromaDB
-        ids       = [f"{pdf_file}_chunk_{i}" for i in range(len(chunks))]
-        metadatas = [{"source": pdf_file, "chunk_index": i} for i in range(len(chunks))]
+        ids       = [f"{file}_chunk_{i}" for i in range(len(chunks))]
+        metadatas = [{"source": file, "chunk_index": i} for i in range(len(chunks))]
 
         # Insere no ChromaDB — upsert evita duplicatas em re-execuções
         collection.upsert(
@@ -99,10 +109,10 @@ def ingest_documents():
             documents=chunks,
             metadatas=metadatas,
         )
-        print(f" Aeee!🎆 {pdf_file} indexado com sucesso.")
+        print(f" Aeee!🎆 {file} indexado com sucesso.")
 
     print(f"\nIngestão concluída. Total de documentos na collection: {collection.count()}")
 
 
 if __name__ == "__main__":
-    ingest_documents
+    ingest_documents()
