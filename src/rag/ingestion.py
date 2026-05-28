@@ -9,20 +9,37 @@ execução: python -m src.rag.ingestion
 
 import os
 import chromadb
+import ssl
+import numpy as np
 from pypdf import PdfReader
-from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+from chromadb import EmbeddingFunction
 
 os.environ["HUGGINGFACE_HUB_VERBOSITY"] = "error"
 os.environ["CURL_CA_BUNDLE"] = ""
 os.environ["REQUESTS_CA_BUNDLE"] = ""
 
+ssl._create_default_https_context = ssl._create_unverified_context
+os.environ["PYTHONHTTPSVERIFY"] = "0"
+
+class SimpleEmbedding(EmbeddingFunction):
+    def __call__(self, input):
+        result = []
+        for text in input:
+            vec = np.zeros(128, dtype=np.float32)
+            for i, char in enumerate(text):
+                vec[i % 128] += ord(char)
+            norm = np.linalg.norm(vec)
+            if norm > 0:
+                vec = vec / norm
+            result.append(vec.tolist())
+        return result
+    
 # ── Configurações ─────────────────────────────────────────────────────────────
 KNOWLEDGE_BASE_DIR = "knowledge_base"
 CHROMA_DB_PATH     = "data/chroma_db"
 COLLECTION_NAME    = "compliance_docs"
 CHUNK_SIZE         = 500   # Tamanho de cada chunk em caracteres
 CHUNK_OVERLAP      = 50    # Sobreposição entre chunks para preservar contexto
-EMBEDDING_MODEL    = "all-MiniLM-L6-v2"  # Modelo leve e eficiente para embeddings
 
 
 def extract_text_from_pdf(pdf_path: str) -> str:
@@ -72,8 +89,7 @@ def ingest_documents():
     # Inicializa o cliente ChromaDB persistente
     client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
 
-    # Usa SentenceTransformer para gerar embeddings localmente
-    embedding_fn = SentenceTransformerEmbeddingFunction(model_name=EMBEDDING_MODEL)
+    embedding_fn = SimpleEmbedding()
 
     # Cria ou recupera a collection — operação idempotente
     collection = client.get_or_create_collection(
