@@ -52,14 +52,14 @@ Análise:
 - CDB é permitido para perfil conservador.
 - Risco: baixo.
 - Veredito: conforme.
-{
+{{
     "is_compliant": true,
     "risk_level": "baixo",
     "reason": "CDB é um instrumento de renda fixa, adequado para perfil conservador.",
     "mentioned_products": ["CDB"],
     "recommendations": [],
     "confidence_score": 0.95
-}
+}}
 
 ### Exemplo 2 — CONSERVADOR | Não conforme
 Perfil: conservador
@@ -69,14 +69,14 @@ Análise:
 - Ações são proibidas para perfil conservador.
 - Risco: alto.
 - Veredito: não conforme.
-{
+{{
     "is_compliant": false,
     "risk_level": "alto",
     "reason": "Ações de renda variável são incompatíveis com perfil conservador.",
     "mentioned_products": ["Ações Petrobras", "Tesouro Direto"],
     "recommendations": ["Substituir ações por renda fixa de baixo risco."],
     "confidence_score": 0.97
-}
+}}
 
 ### Exemplo 3 — MODERADO | Conforme
 Perfil: moderado
@@ -86,14 +86,14 @@ Análise:
 - Alocação em renda variável dentro do limite de 30%.
 - Risco: médio.
 - Veredito: conforme.
-{
+{{
     "is_compliant": true,
     "risk_level": "médio",
     "reason": "Alocação em renda variável dentro do limite permitido para perfil moderado.",
     "mentioned_products": ["Fundos Balanceados", "Ações Blue Chips"],
     "recommendations": [],
     "confidence_score": 0.90
-}
+}}
 
 ### Exemplo 4 — MODERADO | Não conforme
 Perfil: moderado
@@ -103,14 +103,14 @@ Análise:
 - Criptomoedas são proibidas para perfil moderado.
 - Risco: alto.
 - Veredito: não conforme.
-{
+{{
     "is_compliant": false,
     "risk_level": "alto",
     "reason": "Criptomoedas são incompatíveis com perfil moderado.",
     "mentioned_products": ["Criptomoedas", "Renda Fixa"],
     "recommendations": ["Substituir criptomoedas por fundos balanceados ou renda fixa."],
     "confidence_score": 0.93
-}
+}}
 
 ### Exemplo 5 — ARROJADO | Conforme
 Perfil: arrojado
@@ -120,14 +120,14 @@ Análise:
 - Todos os produtos são permitidos para perfil arrojado.
 - Risco: alto.
 - Veredito: conforme.
-{
+{{
     "is_compliant": true,
     "risk_level": "alto",
     "reason": "Perfil arrojado permite derivativos e criptomoedas. Alocação diversificada.",
     "mentioned_products": ["Bitcoin", "Opções", "Renda Fixa"],
     "recommendations": [],
     "confidence_score": 0.88
-}
+}}
 
 ### Exemplo 6 — ARROJADO | Não conforme
 Perfil: arrojado
@@ -137,28 +137,28 @@ Análise:
 - Concentração total em ativo sem histórico regulatório fere normas ANBIMA.
 - Risco: alto.
 - Veredito: não conforme.
-{
+{{
     "is_compliant": false,
     "risk_level": "alto",
     "reason": "Concentração total em ativo sem regulamentação fere diretrizes ANBIMA de diversificação.",
     "mentioned_products": ["Token DeFi"],
     "recommendations": ["Diversificar portfólio e incluir ativos com maior liquidez e respaldo regulatório."],
     "confidence_score": 0.85
-}
+}}
 """
 
-USER_PROMPT_TEMPLATE = f"""
-{FEW_SHOT_EXAMPLES}
+USER_PROMPT_TEMPLATE = """
+{few_shot_examples}
 
 ---
 
 Agora analise o caso abaixo seguindo o mesmo processo:
 
-PERFIL DO CLIENTE: {{client_profile}}
-RECOMENDAÇÃO: {{text}}
+PERFIL DO CLIENTE: {client_profile}
+RECOMENDAÇÃO: {text}
 
 BASE NORMATIVA RELEVANTE:
-{{context}}
+{context}
 """
 
 REFINEMENT_PROMPT_TEMPLATE = """
@@ -185,6 +185,7 @@ def analyze_recommendation(request: AnalysisRequest) -> AnalysisResult:
     context = "\n\n".join([c["text"] for c in chunks])
 
     user_prompt = USER_PROMPT_TEMPLATE.format(
+        few_shot_examples=FEW_SHOT_EXAMPLES,
         client_profile=request.client_profile,
         text=request.text,
         context=context,
