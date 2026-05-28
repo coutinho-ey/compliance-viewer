@@ -16,4 +16,4 @@ class AnalysisResult(BaseModel):
     recommendations: List[str] = Field(default_factory=list, description="Sugestão de ajuste.")
     source_documents: List[str] = Field(default_factory=list, description="Documentos utilizados na análise.")
     source_chunk_ids: List[str] = Field(default_factory=list, description="IDs dos chunks utilizados.") 
-    confidence_score: float= Field(deafult=0.0, description="Confiança do modelo na análise (0.0 a 1.0).")
+    confidence_score: float = Field(default=0.0, description="Confiança do modelo na análise (0.0 a 1.0).")

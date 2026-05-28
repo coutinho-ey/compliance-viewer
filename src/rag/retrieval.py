@@ -5,13 +5,32 @@ Serviço de recuperação de chunks.
 - Aplica re-ranking pra refinar ordem de resultados
 """
 
+import os
 import chromadb
-from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+import ssl
+import numpy as np
+from pypdf import PdfReader
+from chromadb import EmbeddingFunction
 
+ssl._create_default_https_context = ssl._create_unverified_context
+os.environ["PYTHONHTTPSVERIFY"] = "0"
+
+class SimpleEmbedding(EmbeddingFunction):
+    def __call__(self, input):
+        result = []
+        for text in input:
+            vec = np.zeros(128, dtype=np.float32)
+            for i, char in enumerate(text):
+                vec[i % 128] += ord(char)
+            norm = np.linalg.norm(vec)
+            if norm > 0:
+                vec = vec / norm
+            result.append(vec.tolist())
+        return result
+    
 # ── Configurações ─────────────────────────────────────────────────────────────
 CHROMA_DB_PATH     = "data/chroma_db"
 COLLECTION_NAME    = "compliance_docs"
-EMBEDDING_MODEL    = "all-MiniLM-L6-v2"  # Modelo leve e eficiente para embeddings
 TOP_K_RETRIEVAL    = 10  # Número de chunks a recuperar
 TOP_K_FINAL        = 3  # Número de chunks a retornar após re-ranking
 
@@ -20,7 +39,7 @@ def get_collection() -> chromadb.Collection:
     Conecta ao ChromaDB e retorna a collection.
     """
     client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
-    embedding_fn = SentenceTransformerEmbeddingFunction(model_name=EMBEDDING_MODEL)
+    embedding_fn = SimpleEmbedding()
 
     collection = client.get_collection(
         name=COLLECTION_NAME,

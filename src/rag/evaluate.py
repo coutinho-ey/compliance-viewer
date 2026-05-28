@@ -46,6 +46,8 @@ EVAL_QUERIES = [
     },
 ]
 
+#ADICIONAR EX DE PEGADINHAS - inserir palavras para achar que a resposta certa eh um arquivo, mas pelo signifcado do prompt a resposta seria outra
+
 
 # ── Métricas ───────────────────────────────────────────────────────────────────
 
