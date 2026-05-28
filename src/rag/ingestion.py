@@ -12,6 +12,10 @@ import chromadb
 from pypdf import PdfReader
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 
+os.environ["HUGGINGFACE_HUB_VERBOSITY"] = "error"
+os.environ["CURL_CA_BUNDLE"] = ""
+os.environ["REQUESTS_CA_BUNDLE"] = ""
+
 # ── Configurações ─────────────────────────────────────────────────────────────
 KNOWLEDGE_BASE_DIR = "knowledge_base"
 CHROMA_DB_PATH     = "data/chroma_db"
