@@ -253,6 +253,13 @@ Para detalhes completos, veja [`docs/decisions.md`](docs/decisions.md).
 
 ---
 
+## 🖇️ Referência
+
+O projeto foi produzido a partir da estrutura feita pelo Carlos Ribeiro (carlos.ribeiro@br.ey.com).
+Link do diretório base: https://github.com/carlos-augusto-ey/development-program-ai_engineer
+
+---
+
 ## 📞 Contato
 
 Dúvidas ou sugestões:
