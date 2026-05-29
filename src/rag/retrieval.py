@@ -114,8 +114,9 @@ def retrieve_and_rerank(query: str, top_k_final: int = TOP_K_FINAL) -> list[dict
     3. Retorna top_k_final resultados
     """
     chunks = retrieve_chunks(query, top_k=TOP_K_RETRIEVAL)
-    reranked = rerank_chunks(query, chunks)
-    return reranked[:top_k_final]
+    # reranked = rerank_chunks(query, chunks)
+    # return reranked[:top_k_final]
+    return chunks[:top_k_final]
 
 if __name__ == "__main__":
     query_teste = "perfil conservador renda fixa suitability"
