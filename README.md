@@ -1,6 +1,6 @@
 # 🔍 Compliance Viewer
 
-Serviço especialista de análise automatizada de recomendações de investimento, simulando um analista de compliance financeiro com uso de LLM (Azure OpenAI).
+Serviço especialista de análise automatizada de recomendações de investimento, combinando RAG (Retrieval-Augmented Generation) + LLM (Azure OpenAI) para simular um analista de compliance financeiro embasado em documentos normativos oficiais.
 
 ---
 
@@ -10,18 +10,15 @@ Serviço especialista de análise automatizada de recomendações de investiment
 Analistas de compliance gastam horas revisando manualmente comunicações de investimento para garantir a adequação ao perfil de risco do cliente. O processo é lento, caro e sujeito a falhas humanas.
 
 ### A Solução
-A **Compliance Viewer** automatiza essa análise. O serviço recebe uma recomendação de investimento e o perfil do cliente, e retorna uma análise estruturada indicando se há ou não conformidade — com justificativa, nível de risco e sugestões de ajuste.
+A **Compliance Viewer** automatiza essa análise. O serviço recebe uma recomendação de investimento e o perfil do cliente, recupera os trechos normativos mais relevantes da knowledge base (CVM, ANBIMA, PAI) e retorna uma análise estruturada com conformidade, nível de risco, justificativa embasada e rastreabilidade das fontes utilizadas.
 
 ### Posição no Programa
-Este projeto é a **fundação** do pipeline completo. Algumas pastas já estão estruturadas para receber os próximos projetos:
 
 ```
   Projeto 1                Projeto 2            Projeto 3
 Compliance Viewer    →    RAG Pipeline   →   Agente Autônomo
-     (concluído)             (em breve)           (em breve)
+  (concluído)             (concluído)          (em breve)
 ```
-
-> As pastas `src/rag/` e `src/agents/` já existem no repositório como base para os Projetos 2 e 3. Atualmente estão vazias — serão implementadas nas próximas fases.
 
 ---
 
@@ -38,8 +35,8 @@ Compliance Viewer    →    RAG Pipeline   →   Agente Autônomo
 Clone o repositório e acesse a pasta do projeto:
 
 ```bash
-git clone https://github.com/coutinho-ey/complience-checker.git
-cd complience-checker
+git clone https://github.com/coutinho-ey/compliance-viewer.git
+cd compliance-viewer
 ```
 
 Crie e ative o ambiente virtual:
@@ -73,7 +70,17 @@ AZURE_DEPLOYMENT_NAME="seu-deployment-name-aqui"
 
 > ⚠️ **Nunca versione o `.env`.** Ele já está no `.gitignore`.
 
-### 4. Execução
+### 4. Ingestão da Knowledge Base
+
+Antes de subir a API, é necessário popular o ChromaDB com os documentos normativos:
+
+```bash
+python -m src.rag.ingestion
+```
+
+> Execute apenas uma vez. Re-execuções são seguras — o upsert evita duplicatas.
+
+### 5. Execução
 
 ```bash
 uvicorn src.main:app --reload
@@ -88,14 +95,17 @@ Acesse a documentação interativa: [http://127.0.0.1:8000/docs](http://127.0.0.
 ### Build
 
 ```bash
-sudo docker build -t compliancechecker:project1 .
+sudo docker build -t complianceviewer:project2 .
 ```
 
 ### Run
 
 ```bash
-sudo docker run -p 8000:8000 --env-file .env compliancechecker:project1
+DATA_PATH=$(pwd)/data
+sudo docker run -p 8000:8000 --env-file .env -v "$DATA_PATH:/app/data" complianceviewer:project2
 ```
+
+> O `-v` monta o ChromaDB gerado na ingestão dentro do container. Rode a ingestão antes do build.
 
 Acesse a documentação interativa: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 
@@ -103,11 +113,23 @@ Acesse a documentação interativa: [http://127.0.0.1:8000/docs](http://127.0.0.
 
 ---
 
+## 🧮 Embeddings
+
+O projeto utiliza um embedding determinístico e fixo implementado localmente via numpy (`SimpleEmbedding`).
+
+**Por que isso importa:** para que o RAG funcione corretamente, o vetor gerado para uma query na hora da busca precisa estar no mesmo espaço vetorial dos chunks indexados durante a ingestão. Se os embeddings mudarem entre execuções, a busca retorna resultados inconsistentes.
+
+O `SimpleEmbedding` garante isso: dado o mesmo texto, sempre gera o mesmo vetor — sem dependência de modelo externo, sem variação entre execuções.
+
+> ⚠️ **Não troque o método de embedding sem reingestão completa.** Se o `SimpleEmbedding` for substituído por outro modelo, delete `data/chroma_db/` e rode `python -m src.rag.ingestion` novamente para reindexar toda a knowledge base com o novo vetor.
+
+---
+
 ## 🗂️ Estrutura de Pastas
 
 ```
 project-1/
-├── .env                          # Credenciais Azure
+├── .env                          # Credenciais Azure (não versionado)
 ├── .gitignore
 ├── Dockerfile
 ├── requirements.txt
@@ -126,18 +148,28 @@ project-1/
 │   │   └── llm_client.py         # Cliente Azure OpenAI reutilizável
 │   ├── services/
 │   │   ├── __init__.py
-│   │   └── complience_service.py # Lógica de negócio + prompt de compliance
-│   ├── rag/                      # Proximas atualizações
-│   │   └── __init__.py
-│   └── agents/                   # Próximas atualizações 
+│   │   └── complience_service.py # Lógica de negócio + RAG + prompts
+│   ├── rag/
+│   │   ├── __init__.py
+│   │   ├── ingestion.py          # Pipeline de ingestão da knowledge base
+│   │   ├── retrieval.py          # Recuperação e re-ranking de chunks
+│   │   └── evaluate.py           # Avaliação da qualidade do RAG
+│   └── agents/                   # Reservado para Projeto 3
 │       └── __init__.py
 ├── tests/
-│   ├── test_integration.py       # Testes ponta a ponta com LLM 
+│   ├── test_integration.py       # Testes ponta a ponta com LLM
 │   └── test_unit.py              # Testes unitários com mock do LLM
-├── data/                         # Dados de entrada/saída
+├── data/
+│   └── chroma_db/                # Base vetorial ChromaDB (gerada pela ingestão)
 ├── docs/
-│   └── decisions.md              # Documento de decisões técnicas
-└── knowledge_base/               # Base de conhecimento para RAG - proximas atualizações
+│   ├── architecture.md           # Diagrama e fluxo da arquitetura
+│   ├── decisions.md              # Registro de decisões técnicas
+│   ├── SDD.md                    # Solution Design Document
+│   └── DEVELOPER_GUIDE.md        # Guia do desenvolvedor
+└── knowledge_base/
+    ├── Anbima_codigo_distribuicao_produtos_Investimento.pdf
+    ├── resol_030_cvm.pdf
+    └── analise_de_perfil_do_investidor.txt
 ```
 
 ---
@@ -154,7 +186,7 @@ project-1/
 ```json
 POST /api/v1/analyze
 {
-  "text": "Recomendo alocar 100% do patrimônio em opções alavancadas.",
+  "text": "Recomendo alocar 100% do patrimônio em ações da Petrobras.",
   "client_profile": "conservador",
   "client_id": "cliente-001"
 }
@@ -166,12 +198,12 @@ POST /api/v1/analyze
 {
   "is_compliant": false,
   "risk_level": "alto",
-  "reason": "Opções alavancadas são instrumentos de alta volatilidade, incompatíveis com perfil conservador.",
-  "mentioned_products": ["opções alavancadas"],
-  "recommendations": [
-    "Substituir por Tesouro Direto ou CDB de banco sólido.",
-    "Revisar processo de suitability com o cliente."
-  ]
+  "reason": "Ações são instrumentos de renda variável, incompatíveis com perfil conservador.",
+  "mentioned_products": ["Ações Petrobras"],
+  "recommendations": ["Substituir por Tesouro Direto ou CDB de banco sólido."],
+  "source_documents": ["Anbima_codigo_distribuicao_produtos_Investimento.pdf"],
+  "source_chunk_ids": ["Anbima_codigo_distribuicao_produtos_Investimento.pdf_chunk_42"],
+  "confidence_score": 0.97
 }
 ```
 
@@ -199,13 +231,11 @@ python -m pytest tests/test_integration.py -v
 python -m pytest tests/test_unit.py -v
 ```
 
-### Todos os testes
+### Avaliação do RAG
 
 ```bash
-python -m pytest tests/ -v
+python -m src.rag.evaluate
 ```
-
-**Resultado esperado:** 7 testes passando (4 integração + 3 unitários).
 
 ---
 
@@ -214,10 +244,12 @@ python -m pytest tests/ -v
 | Decisão | Escolha | Motivo |
 |---|---|---|
 | Framework | FastAPI | Documentação automática OpenAPI + validação nativa com Pydantic |
-| Validação de saída do LLM | Pydantic | Garante contrato rígido — LLMs são não-determinísticos |
+| Validação de saída do LLM | Pydantic + Instructor | Structured output — elimina json.loads manual |
 | Temperature | 0 | Máximo determinismo — compliance exige consistência e auditabilidade |
-| Separação de camadas | services/ desacoplado de api/ | Testabilidade, reutilização e manutenção |
-| Formato de saída do LLM | json_object | Elimina texto fora do JSON sem necessidade de heurísticas de parsing |
+| Vector DB | ChromaDB | Leve, local, sem dependência de serviço externo |
+| Embeddings | SimpleEmbedding (numpy) | Sem download externo — compatível com rede corporativa |
+| Re-ranking | Híbrido (semântico + lexical) | 60% distância cosine + 40% frequência de termos |
+| Prompt Engineering | Many-Shot + CoT + Chaining | Maximiza precisão e rastreabilidade das análises |
 
 Para detalhes completos, veja [`docs/decisions.md`](docs/decisions.md).
 
@@ -225,13 +257,15 @@ Para detalhes completos, veja [`docs/decisions.md`](docs/decisions.md).
 
 ## ✅ Entregáveis
 
-- [x] Endpoint `POST /api/v1/analyze` funcional
-- [x] Resposta JSON validada com Pydantic (`is_compliant`, `risk_level`, `reason`, `mentioned_products`, `recommendations`)
+- [x] Endpoint `POST /api/v1/analyze` funcional com RAG
+- [x] Pipeline de ingestão (`src/rag/ingestion.py`) — PDFs e TXTs
+- [x] Serviço de retrieval com re-ranking híbrido (`src/rag/retrieval.py`)
+- [x] Script de avaliação do RAG (`src/rag/evaluate.py`)
+- [x] Resposta JSON com `source_documents`, `source_chunk_ids` e `confidence_score`
+- [x] Prompt Chaining com threshold de confiança
+- [x] Many-Shot + Chain-of-Thought aplicados
 - [x] Documentação automática via Swagger UI (`/docs`)
-- [x] Schemas Pydantic em `src/api/schemas/`
-- [x] Testes unitários e de integração
-- [x] Documento de decisões técnicas em `docs/decisions.md`
-- [x] Dockerfile funcional — build e run validados via WSL
+- [x] Dockerfile funcional com volume para ChromaDB
 
 ---
 
@@ -239,7 +273,6 @@ Para detalhes completos, veja [`docs/decisions.md`](docs/decisions.md).
 
 | Projeto | Descrição | Pasta base |
 |---|---|---|
-| Projeto 2 | RAG Pipeline — enriquecer análises com documentos da `knowledge_base/` | `src/rag/` |
 | Projeto 3 | Agente Autônomo — orquestrar decisões de compliance sem intervenção humana | `src/agents/` |
 
 ---
@@ -247,9 +280,9 @@ Para detalhes completos, veja [`docs/decisions.md`](docs/decisions.md).
 ## 📝 Boas Práticas Adotadas
 
 - Versionamento seguindo **GitFlow** (branches `main`, `develop`, `feature/xxx`)
-- **Conventional Commits** para mensagens padronizadas (`feat:`, `docs:`, `test:`)
+- **Conventional Commits** para mensagens padronizadas (`feat:`, `docs:`, `fix:`)
 - `.env` nunca versionado — credenciais protegidas via `.gitignore`
-- Separação clara de responsabilidades entre camadas (`api/`, `services/`, `core/`)
+- Separação clara de responsabilidades entre camadas (`api/`, `services/`, `core/`, `rag/`)
 
 ---
 
