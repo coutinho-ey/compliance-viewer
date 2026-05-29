@@ -43,6 +43,27 @@ Usamos **Pydantic** para validar tanto a entrada (AnalysisRequest) quanto a saí
 
 ---
 
+## Structured Output — Instructor
+
+**Status:** Aceito
+
+### Contexto
+O Projeto 1 usava `json.loads()` manual para parsear a resposta do LLM, gerando falsos-negativos silenciosos quando o modelo retornava JSON mal formatado.
+
+### Decisão
+Adotamos o **Instructor** para structured output via Pydantic diretamente na chamada ao LLM.
+
+### Justificativa
+- Elimina `json.loads()` manual — sem falsos-negativos silenciosos
+- O Instructor aplica retry automático se o modelo errar o formato
+- O `AnalysisResult` é retornado já validado pelo Pydantic
+- Integra nativamente com o cliente Azure OpenAI
+
+### Alternativa Descartada
+**response_format={"type": "json_object"}** — garante JSON mas não valida o schema. Ainda exige parsing manual e tratamento de campos ausentes.
+
+---
+
 ## Temperature do LLM — 0
 
 **Status:** Aceito
@@ -83,23 +104,88 @@ A lógica de negócio vive em `src/services/`, completamente desacoplada da cama
 
 ---
 
-## Formato de Saída do LLM — json_object
+## Vector DB — ChromaDB Local
 
 **Status:** Aceito
 
 ### Contexto
-O LLM pode retornar texto fora do JSON (ex: "Claro! Aqui está:..."), quebrando o parsing.
+Precisávamos de um banco de dados vetorial para armazenar e consultar os embeddings da knowledge base.
 
 ### Decisão
-Usamos `response_format={"type": "json_object"}` na chamada ao Azure OpenAI.
+Adotamos o **ChromaDB** em modo persistente local (`data/chroma_db/`).
 
 ### Justificativa
-- Garante que o modelo retorne SOMENTE JSON, sem texto adicional
-- Elimina necessidade de heurísticas de parsing (strip, regex)
-- Suportado nativamente pelo GPT-4 no Azure
+- Leve, sem dependência de serviço externo ou infraestrutura cloud
+- Persistência em disco — sobrevive a reinicializações do container via volume Docker
+- API simples e direta, ideal para o estágio atual do projeto
+- Facilmente substituível por um serviço gerenciado (Pinecone, Weaviate) no futuro
 
 ### Alternativa Descartada
-**Parsear texto livre com regex** — frágil e dependente de comportamento do modelo que pode mudar entre versões.
+**FAISS** — não tem persistência nativa, exige serialização manual. **Pinecone/Weaviate** — dependência de serviço externo desnecessária neste estágio.
+
+---
+
+## Embeddings — SimpleEmbedding (numpy)
+
+**Status:** Aceito
+
+### Contexto
+O modelo `all-MiniLM-L6-v2` do HuggingFace falha em ambientes corporativos com inspeção SSL (rede EY), pois tenta baixar o modelo na inicialização e o certificado corporativo bloqueia a conexão.
+
+### Decisão
+Implementamos o **SimpleEmbedding** — função de embedding local baseada em numpy, sem downloads externos.
+
+### Justificativa
+- Funciona em qualquer ambiente, incluindo redes corporativas com proxy SSL
+- Zero dependências externas além do numpy (já instalado)
+- Suficiente para o pipeline RAG funcional com re-ranking híbrido
+
+### Alternativa Descartada
+**SentenceTransformerEmbeddingFunction** e **DefaultEmbeddingFunction** — ambas tentam baixar modelos externos na inicialização, incompatível com a rede corporativa da EY.
+
+---
+
+## Re-ranking — Híbrido (Semântico + Lexical)
+
+**Status:** Aceito
+
+### Contexto
+A busca vetorial por similaridade semântica nem sempre traz os chunks mais relevantes para documentos jurídicos, que possuem vocabulário técnico específico.
+
+### Decisão
+Aplicamos re-ranking híbrido após o retrieval inicial: **60% semântico + 40% lexical**.
+
+### Justificativa
+- Score semântico (distância cosine) captura similaridade de significado
+- Score lexical (frequência de termos da query no chunk) captura precisão terminológica
+- Documentos jurídicos têm vocabulário técnico que o embedding pode subestimar
+- A combinação melhora a relevância dos chunks retornados ao LLM
+
+### Alternativa Descartada
+**Somente busca vetorial** — suficiente para linguagem natural, mas subótimo para textos normativos com terminologia específica.
+
+---
+
+## Prompt Engineering — Many-Shot + CoT + Chaining
+
+**Status:** Aceito
+
+### Contexto
+O prompt do Projeto 1 era simples e sem exemplos, gerando análises inconsistentes em casos limítrofes.
+
+### Decisão
+Adotamos três técnicas combinadas:
+- **Many-Shot:** 6 exemplos (2 por perfil) com raciocínio explícito
+- **Chain-of-Thought:** 6 passos de raciocínio obrigatórios antes do veredito
+- **Prompt Chaining:** se `confidence_score < 0.7`, dispara segundo chain de refinamento
+
+### Justificativa
+- Many-Shot ensina o modelo o padrão de análise esperado por exemplos concretos
+- CoT reduz alucinações ao forçar raciocínio passo a passo
+- Prompt Chaining garante segunda opinião em casos de baixa confiança, sem custo extra nos casos claros
+
+### Alternativa Descartada
+**Zero-Shot simples** — inconsistente em casos ambíguos e sem rastreabilidade do raciocínio.
 
 ---
 
