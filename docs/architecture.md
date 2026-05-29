@@ -56,7 +56,7 @@ A Compliance Viewer é um serviço especialista construído em FastAPI que utili
                               │  → Lê PDFs e TXTs             │
                               │  → Chunking com overlap       │
                               │  → Embeddings via             │
-                              │    SentenceTransformers       │
+                              │    SimpleEmbedding (numpy)    │
                               └──────────────┬───────────────┘
                                              │ lê
                                              ▼
