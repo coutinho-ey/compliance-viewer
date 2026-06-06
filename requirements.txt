@@ -7,3 +7,4 @@ instructor
 chromadb
 pypdf
 sentence-transformers
+langchain-text-splitters
