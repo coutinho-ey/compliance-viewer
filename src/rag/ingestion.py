@@ -1,52 +1,66 @@
 """
-Pipeline de ingestão de dados para o projeto de RAG (Retrieval-Augmented Generation)
-- Ler os docs do knowledge base
-- Divisão de chunks
-- Gerar embeddings e armazenar no ChromaDB
+Pipeline de ingestão de dados para o sistema RAG (Retrieval-Augmented Generation).
 
-execução: python -m src.rag.ingestion
+Fluxo:
+1. LÊ os documentos da knowledge_base/ (PDF e TXT)
+2. EXTRAI o texto bruto
+3. CORTA o texto em chunks com overlap (LangChain)
+4. EMBEDA os chunks em batch via Azure OpenAI (text-embedding-ada-002)
+5. JOGA os chunks + embeddings + metadados no ChromaDB
+
+Execução: python -m src.rag.ingestion
 """
 
 import os
+import time
+import logging
+
 import chromadb
-import ssl
-import numpy as np
+from dotenv import load_dotenv
+from openai import AzureOpenAI
 from pypdf import PdfReader
-from chromadb import EmbeddingFunction
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-os.environ["HUGGINGFACE_HUB_VERBOSITY"] = "error"
-os.environ["CURL_CA_BUNDLE"] = ""
-os.environ["REQUESTS_CA_BUNDLE"] = ""
+load_dotenv()
+logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
+logger = logging.getLogger(__name__)
 
-ssl._create_default_https_context = ssl._create_unverified_context
-os.environ["PYTHONHTTPSVERIFY"] = "0"
-
-class SimpleEmbedding(EmbeddingFunction):
-    def __call__(self, input):
-        result = []
-        for text in input:
-            vec = np.zeros(128, dtype=np.float32)
-            for i, char in enumerate(text):
-                vec[i % 128] += ord(char)
-            norm = np.linalg.norm(vec)
-            if norm > 0:
-                vec = vec / norm
-            result.append(vec.tolist())
-        return result
-    
 # ── Configurações ─────────────────────────────────────────────────────────────
 KNOWLEDGE_BASE_DIR = "knowledge_base"
 CHROMA_DB_PATH     = "data/chroma_db"
 COLLECTION_NAME    = "compliance_docs"
 CHUNK_SIZE         = 500   # Tamanho de cada chunk em caracteres
 CHUNK_OVERLAP      = 50    # Sobreposição entre chunks para preservar contexto
+EMBEDDING_MODEL    = "text-embedding-ada-002"
+BATCH_SIZE         = 16    # Quantos chunks enviar por chamada ao Azure
+RATE_LIMIT_SLEEP   = 2.0   # Pausa entre batches para não estourar rate limit
 
+
+# ── Cliente Azure e embeddings (funções de apoio) ──────────────────────────────
+
+def get_azure_client() -> AzureOpenAI:
+    """Cria o cliente Azure OpenAI a partir das variáveis de ambiente."""
+    return AzureOpenAI(
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+        api_key=os.getenv("AZURE_OPENAI_KEY"),
+        api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+    )
+
+
+def get_embeddings_batch(texts: list[str], client: AzureOpenAI) -> list[list[float]]:
+    """
+    Gera embeddings de vários textos numa só chamada ao Azure.
+    Reduz drasticamente o número de requisições e evita o rate limit (429).
+    Cada embedding tem 1536 dimensões.
+    """
+    response = client.embeddings.create(model=EMBEDDING_MODEL, input=texts)
+    return [item.embedding for item in response.data]
+
+
+# ── Extração de texto ──────────────────────────────────────────────────────────
 
 def extract_text_from_pdf(pdf_path: str) -> str:
-    """
-    Extrai o texto bruto de um arquivo PDF página por página.
-    Retorna o texto completo concatenado.
-    """
+    """Extrai o texto bruto de um PDF, página por página."""
     reader = PdfReader(pdf_path)
     text = ""
     for page in reader.pages:
@@ -57,81 +71,90 @@ def extract_text_from_pdf(pdf_path: str) -> str:
 
 
 def extract_text_from_txt(txt_path: str) -> str:
-    """
-    Lê o conteúdo bruto de um arquivo TXT.
-    Retorna o texto completo.
-    """
+    """Lê o conteúdo bruto de um arquivo TXT."""
     with open(txt_path, "r", encoding="utf-8") as f:
         return f.read()
 
 
-def split_into_chunks(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
-    """
-    Divide o texto em chunks com sobreposição.
-    A sobreposição garante que o contexto não seja perdido nas bordas dos chunks.
-    """
-    chunks = []
-    start = 0
-    while start < len(text):
-        end = start + chunk_size
-        chunks.append(text[start:end].strip())
-        start += chunk_size - overlap
-    return [c for c in chunks if c]  # Remove chunks vazios
+# ── Chunking (LangChain) ───────────────────────────────────────────────────────
 
+def split_into_chunks(text: str) -> list[str]:
+    """
+    Divide o texto em chunks usando o RecursiveCharacterTextSplitter do LangChain.
+    Quebra primeiro em parágrafos, depois frases, depois palavras — preservando
+    o significado melhor que um corte cego por tamanho.
+    """
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP,
+        separators=["\n\n", "\n", ". ", " ", ""],
+    )
+    chunks = splitter.split_text(text)
+    return [c.strip() for c in chunks if c.strip()]
+
+
+# ── Pipeline principal ─────────────────────────────────────────────────────────
 
 def ingest_documents():
     """
-    Fluxo principal de ingestão:
-    1. Lê todos os PDFs e TXTs da knowledge_base/
-    2. Extrai e divide o texto em chunks
-    3. Armazena no ChromaDB com metadados de rastreabilidade
+    Pipeline completo de ingestão:
+    LÊ → EXTRAI → CORTA → EMBEDA (em batch) → JOGA NO CHROMADB
     """
-    # Inicializa o cliente ChromaDB persistente
-    client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
+    logger.info("Iniciando ingestão...")
 
-    embedding_fn = SimpleEmbedding()
+    azure_client = get_azure_client()
+    chroma_client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
 
-    # Cria ou recupera a collection — operação idempotente
-    collection = client.get_or_create_collection(
-        name=COLLECTION_NAME,
-        embedding_function=embedding_fn,
-    )
+    # Recria a collection do zero para garantir consistência dos embeddings
+    try:
+        chroma_client.delete_collection(COLLECTION_NAME)
+        logger.info(f"Collection '{COLLECTION_NAME}' antiga removida.")
+    except Exception:
+        pass
 
-    # Processa cada arquivo da knowledge_base/
-    files = [f for f in os.listdir(KNOWLEDGE_BASE_DIR) if f.endswith(".pdf") or f.endswith(".txt")]
+    collection = chroma_client.create_collection(name=COLLECTION_NAME)
 
+    files = [f for f in os.listdir(KNOWLEDGE_BASE_DIR) if f.endswith((".pdf", ".txt"))]
     if not files:
-        print("Nenhum arquivo encontrado na knowledge_base/.")
+        logger.warning("Nenhum arquivo encontrado na knowledge_base/.")
         return
 
+    total_chunks = 0
     for file in files:
         file_path = os.path.join(KNOWLEDGE_BASE_DIR, file)
-        print(f"Processando: {file}")
+        logger.info(f"Processando: {file}")
 
-        # Extrai texto de acordo com o tipo de arquivo
         text = extract_text_from_pdf(file_path) if file.endswith(".pdf") else extract_text_from_txt(file_path)
-
         if not text.strip():
-            print(f"  ⚠️ Nenhum texto extraído de {file}. Pulando.")
+            logger.warning(f"  Nenhum texto extraído de {file}. Pulando.")
             continue
 
-        # Divide em chunks
         chunks = split_into_chunks(text)
-        print(f"  {len(chunks)} chunks gerados.")
+        logger.info(f"  {len(chunks)} chunks gerados. Gerando embeddings em batch...")
 
-        # Prepara os dados para inserção no ChromaDB
-        ids       = [f"{file}_chunk_{i}" for i in range(len(chunks))]
-        metadatas = [{"source": file, "chunk_index": i} for i in range(len(chunks))]
+        # Processa em batches para reduzir requisições e evitar rate limit
+        for start in range(0, len(chunks), BATCH_SIZE):
+            batch = chunks[start : start + BATCH_SIZE]
+            embeddings = get_embeddings_batch(batch, azure_client)
 
-        # Insere no ChromaDB — upsert evita duplicatas em re-execuções
-        collection.upsert(
-            ids=ids,
-            documents=chunks,
-            metadatas=metadatas,
-        )
-        print(f" Aeee!🎆 {file} indexado com sucesso.")
+            ids = [f"{file}_chunk_{start + j}" for j in range(len(batch))]
+            metadatas = [
+                {"source": file, "chunk_index": start + j, "chunk_id": f"{file}_chunk_{start + j}"}
+                for j in range(len(batch))
+            ]
 
-    print(f"\nIngestão concluída. Total de documentos na collection: {collection.count()}")
+            collection.add(
+                ids=ids,
+                documents=batch,
+                embeddings=embeddings,
+                metadatas=metadatas,
+            )
+            time.sleep(RATE_LIMIT_SLEEP)  # respeita o rate limit do Azure
+
+        total_chunks += len(chunks)
+        logger.info(f"  {file} indexado com sucesso.")
+
+    logger.info(f"\nIngestão concluída. Total de {total_chunks} chunks no ChromaDB.")
 
 
 if __name__ == "__main__":

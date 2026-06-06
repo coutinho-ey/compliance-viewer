@@ -34,3 +34,6 @@ docker-compose.yml
 *.swp
 *.swo
 *~
+
+# Data
+data/chroma_dbdata/chroma_db/
