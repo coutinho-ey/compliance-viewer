@@ -46,39 +46,13 @@ EVAL_QUERIES = [
     },
 ]
 
-#ADICIONAR EX DE PEGADINHAS - inserir palavras para achar que a resposta certa eh um arquivo, mas pelo signifcado do prompt a resposta seria outra
 
-
-# ── Métricas ───────────────────────────────────────────────────────────────────
-
-def evaluate_query(query: str, expected_sources: list[str]) -> dict:
-    """
-    Executa o pipeline de retrieval para uma query e calcula métricas:
-    - source_hit: ao menos um chunk retornado veio de uma fonte esperada
-    - avg_score: média dos scores finais dos chunks retornados
-    - top_source: fonte do chunk com maior score
-    """
-    results = retrieve_and_rerank(query)
-
-    returned_sources = [r["source"] for r in results]
-    scores = [r["score_final"] for r in results]
-
-    source_hit = any(s in expected_sources for s in returned_sources)
-    avg_score = sum(scores) / len(scores) if scores else 0.0
-    top_source = returned_sources[0] if returned_sources else "N/A"
-
-    return {
-        "query": query,
-        "source_hit": source_hit,
-        "avg_score": avg_score,
-        "top_source": top_source,
-        "returned_sources": returned_sources,
-    }
-
+# ── Função principal ───────────────────────────────────────────────────────────
 
 def run_evaluation() -> None:
     """
     Roda todas as queries de avaliação e imprime o relatório.
+    Chama evaluate_query() para cada item de EVAL_QUERIES.
     """
     print("=" * 60)
     print("Avaliação do Pipeline RAG — Compliance Viewer")
@@ -95,9 +69,8 @@ def run_evaluation() -> None:
         print(f"   Avg score:   {result['avg_score']:.4f}")
         print(f"   Fontes retornadas: {result['returned_sources']}")
 
-    # Resumo final
-    total = len(results)
-    hits = sum(1 for r in results if r["source_hit"])
+    total      = len(results)
+    hits       = sum(1 for r in results if r["source_hit"])
     avg_global = sum(r["avg_score"] for r in results) / total
 
     print("\n" + "=" * 60)
@@ -105,6 +78,35 @@ def run_evaluation() -> None:
     print(f"Avg Score Global: {avg_global:.4f}")
     print("=" * 60)
 
+
+# ── Função de apoio ────────────────────────────────────────────────────────────
+
+def evaluate_query(query: str, expected_sources: list[str]) -> dict:
+    """
+    Executa o pipeline de retrieval para uma query e calcula métricas:
+    - source_hit: ao menos um chunk retornado veio de uma fonte esperada
+    - avg_score:  média dos scores finais dos chunks retornados
+    - top_source: fonte do chunk com maior score
+    """
+    results = retrieve_and_rerank(query)
+
+    returned_sources = [r["source"] for r in results]
+    scores           = [r["score_final"] for r in results]
+
+    source_hit = any(s in expected_sources for s in returned_sources)
+    avg_score  = sum(scores) / len(scores) if scores else 0.0
+    top_source = returned_sources[0] if returned_sources else "N/A"
+
+    return {
+        "query":            query,
+        "source_hit":       source_hit,
+        "avg_score":        avg_score,
+        "top_source":       top_source,
+        "returned_sources": returned_sources,
+    }
+
+
+# ── Execução ───────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     run_evaluation()

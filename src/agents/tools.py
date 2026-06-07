@@ -8,6 +8,7 @@ Cada função é uma ação atômica que o agente pode executar:
 
 Estas funções são usadas diretamente pelo grafo LangGraph e também
 expostas via FastMCP (mcp_server.py) com protocolo formal.
+Instrumentadas com @traced (OpenTelemetry) para rastreabilidade de latência.
 """
 
 import json
@@ -17,24 +18,25 @@ from datetime import datetime
 from pathlib import Path
 
 from src.api.schemas import AnalysisRequest, AnalysisResult
+from src.observability.observability import traced
 from src.services.complience_service import analyze_recommendation
 
 logger = logging.getLogger(__name__)
 
-# ── Caminhos base ──────────────────────────────────────────────────────────────
-INPUT_DIR          = Path("data/input")
-OUTPUT_APPROVED    = Path("data/output/approved")
-OUTPUT_REJECTED    = Path("data/output/rejected_for_review")
-LOGS_DIR           = Path("data/logs")
-ALERT_LOG          = LOGS_DIR / "alerts.log"
+# ── Configuração ───────────────────────────────────────────────────────────────
+INPUT_DIR       = Path("data/input")
+OUTPUT_APPROVED = Path("data/output/approved")
+OUTPUT_REJECTED = Path("data/output/rejected_for_review")
+LOGS_DIR        = Path("data/logs")
+ALERT_LOG       = LOGS_DIR / "alerts.log"
 
-# Garante que os diretórios existam na inicialização do módulo
 for _dir in [INPUT_DIR, OUTPUT_APPROVED, OUTPUT_REJECTED, LOGS_DIR]:
     _dir.mkdir(parents=True, exist_ok=True)
 
 
-# ── Tools ──────────────────────────────────────────────────────────────────────
+# ── Funções principais ─────────────────────────────────────────────────────────
 
+@traced("tool.analyze_compliance")
 def analyze_compliance(file_path: str) -> dict:
     """
     Lê uma minuta de recomendação (JSON) e executa a análise de conformidade
@@ -56,7 +58,7 @@ def analyze_compliance(file_path: str) -> dict:
         payload = json.load(f)
 
     required = {"client_id", "client_profile", "text"}
-    missing = required - payload.keys()
+    missing  = required - payload.keys()
     if missing:
         raise ValueError(f"Campos ausentes no arquivo {path.name}: {missing}")
 
@@ -69,8 +71,8 @@ def analyze_compliance(file_path: str) -> dict:
     result: AnalysisResult = analyze_recommendation(request)
 
     output = result.model_dump()
-    output["file_name"]     = path.name
-    output["client_id"]     = payload["client_id"]
+    output["file_name"]      = path.name
+    output["client_id"]      = payload["client_id"]
     output["client_profile"] = payload["client_profile"]
 
     logger.info(
@@ -80,12 +82,12 @@ def analyze_compliance(file_path: str) -> dict:
     return output
 
 
+@traced("tool.move_file")
 def move_file(file_path: str, destination: str) -> str:
     """
-    Move o arquivo para a pasta de destino correta.
+    Move o arquivo de minuta para a pasta de destino correta.
 
     destination: "approved" ou "rejected_for_review"
-
     Retorna o caminho final do arquivo movido.
     """
     path = Path(file_path)
@@ -95,7 +97,9 @@ def move_file(file_path: str, destination: str) -> str:
     elif destination == "rejected_for_review":
         dest_dir = OUTPUT_REJECTED
     else:
-        raise ValueError(f"Destino inválido: '{destination}'. Use 'approved' ou 'rejected_for_review'.")
+        raise ValueError(
+            f"Destino inválido: '{destination}'. Use 'approved' ou 'rejected_for_review'."
+        )
 
     dest_path = dest_dir / path.name
     shutil.move(str(path), str(dest_path))
@@ -104,6 +108,7 @@ def move_file(file_path: str, destination: str) -> str:
     return str(dest_path)
 
 
+@traced("tool.create_alert")
 def create_alert(file_name: str, reason: str, confidence_score: float) -> str:
     """
     Registra um alerta no log de execução para casos não conformes ou de
@@ -111,7 +116,7 @@ def create_alert(file_name: str, reason: str, confidence_score: float) -> str:
 
     Retorna a mensagem de alerta registrada.
     """
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    timestamp  = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     alert_line = (
         f"[{timestamp}] ALERTA | arquivo={file_name} | "
         f"confidence={confidence_score:.3f} | motivo={reason}\n"

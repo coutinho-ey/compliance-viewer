@@ -29,71 +29,14 @@ logger = logging.getLogger(__name__)
 KNOWLEDGE_BASE_DIR = "knowledge_base"
 CHROMA_DB_PATH     = "data/chroma_db"
 COLLECTION_NAME    = "compliance_docs"
-CHUNK_SIZE         = 500   # Tamanho de cada chunk em caracteres
-CHUNK_OVERLAP      = 50    # Sobreposição entre chunks para preservar contexto
+CHUNK_SIZE         = 500
+CHUNK_OVERLAP      = 50
 EMBEDDING_MODEL    = "text-embedding-ada-002"
-BATCH_SIZE         = 16    # Quantos chunks enviar por chamada ao Azure
-RATE_LIMIT_SLEEP   = 2.0   # Pausa entre batches para não estourar rate limit
+BATCH_SIZE         = 16
+RATE_LIMIT_SLEEP   = 2.0
 
 
-# ── Cliente Azure e embeddings (funções de apoio) ──────────────────────────────
-
-def get_azure_client() -> AzureOpenAI:
-    """Cria o cliente Azure OpenAI a partir das variáveis de ambiente."""
-    return AzureOpenAI(
-        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-        api_key=os.getenv("AZURE_OPENAI_KEY"),
-        api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
-    )
-
-
-def get_embeddings_batch(texts: list[str], client: AzureOpenAI) -> list[list[float]]:
-    """
-    Gera embeddings de vários textos numa só chamada ao Azure.
-    Reduz drasticamente o número de requisições e evita o rate limit (429).
-    Cada embedding tem 1536 dimensões.
-    """
-    response = client.embeddings.create(model=EMBEDDING_MODEL, input=texts)
-    return [item.embedding for item in response.data]
-
-
-# ── Extração de texto ──────────────────────────────────────────────────────────
-
-def extract_text_from_pdf(pdf_path: str) -> str:
-    """Extrai o texto bruto de um PDF, página por página."""
-    reader = PdfReader(pdf_path)
-    text = ""
-    for page in reader.pages:
-        page_text = page.extract_text()
-        if page_text:
-            text += page_text + "\n"
-    return text
-
-
-def extract_text_from_txt(txt_path: str) -> str:
-    """Lê o conteúdo bruto de um arquivo TXT."""
-    with open(txt_path, "r", encoding="utf-8") as f:
-        return f.read()
-
-
-# ── Chunking (LangChain) ───────────────────────────────────────────────────────
-
-def split_into_chunks(text: str) -> list[str]:
-    """
-    Divide o texto em chunks usando o RecursiveCharacterTextSplitter do LangChain.
-    Quebra primeiro em parágrafos, depois frases, depois palavras — preservando
-    o significado melhor que um corte cego por tamanho.
-    """
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=CHUNK_SIZE,
-        chunk_overlap=CHUNK_OVERLAP,
-        separators=["\n\n", "\n", ". ", " ", ""],
-    )
-    chunks = splitter.split_text(text)
-    return [c.strip() for c in chunks if c.strip()]
-
-
-# ── Pipeline principal ─────────────────────────────────────────────────────────
+# ── Função principal ───────────────────────────────────────────────────────────
 
 def ingest_documents():
     """
@@ -102,10 +45,9 @@ def ingest_documents():
     """
     logger.info("Iniciando ingestão...")
 
-    azure_client = get_azure_client()
+    azure_client  = get_azure_client()
     chroma_client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
 
-    # Recria a collection do zero para garantir consistência dos embeddings
     try:
         chroma_client.delete_collection(COLLECTION_NAME)
         logger.info(f"Collection '{COLLECTION_NAME}' antiga removida.")
@@ -132,9 +74,8 @@ def ingest_documents():
         chunks = split_into_chunks(text)
         logger.info(f"  {len(chunks)} chunks gerados. Gerando embeddings em batch...")
 
-        # Processa em batches para reduzir requisições e evitar rate limit
         for start in range(0, len(chunks), BATCH_SIZE):
-            batch = chunks[start : start + BATCH_SIZE]
+            batch      = chunks[start : start + BATCH_SIZE]
             embeddings = get_embeddings_batch(batch, azure_client)
 
             ids = [f"{file}_chunk_{start + j}" for j in range(len(batch))]
@@ -149,13 +90,68 @@ def ingest_documents():
                 embeddings=embeddings,
                 metadatas=metadatas,
             )
-            time.sleep(RATE_LIMIT_SLEEP)  # respeita o rate limit do Azure
+            time.sleep(RATE_LIMIT_SLEEP)
 
         total_chunks += len(chunks)
         logger.info(f"  {file} indexado com sucesso.")
 
     logger.info(f"\nIngestão concluída. Total de {total_chunks} chunks no ChromaDB.")
 
+
+# ── Funções de apoio ───────────────────────────────────────────────────────────
+
+def get_azure_client() -> AzureOpenAI:
+    """Cria o cliente Azure OpenAI a partir das variáveis de ambiente."""
+    return AzureOpenAI(
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+        api_key=os.getenv("AZURE_OPENAI_KEY"),
+        api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+    )
+
+
+def get_embeddings_batch(texts: list[str], client: AzureOpenAI) -> list[list[float]]:
+    """
+    Gera embeddings de vários textos numa só chamada ao Azure.
+    Reduz o número de requisições e evita rate limit (429).
+    Cada embedding tem 1536 dimensões.
+    """
+    response = client.embeddings.create(model=EMBEDDING_MODEL, input=texts)
+    return [item.embedding for item in response.data]
+
+
+def extract_text_from_pdf(pdf_path: str) -> str:
+    """Extrai o texto bruto de um PDF, página por página."""
+    reader = PdfReader(pdf_path)
+    text   = ""
+    for page in reader.pages:
+        page_text = page.extract_text()
+        if page_text:
+            text += page_text + "\n"
+    return text
+
+
+def extract_text_from_txt(txt_path: str) -> str:
+    """Lê o conteúdo bruto de um arquivo TXT."""
+    with open(txt_path, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def split_into_chunks(text: str) -> list[str]:
+    """
+    Divide o texto em chunks usando o RecursiveCharacterTextSplitter do LangChain.
+    Quebra primeiro em parágrafos, depois frases, depois palavras — preservando
+    o significado melhor que um corte cego por tamanho.
+    """
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP,
+        separators=["\n\n", "\n", ". ", " ", ""],
+    )
+    chunks = splitter.split_text(text)
+    return [c.strip() for c in chunks if c.strip()]
+
+
+# ── Execução ───────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     ingest_documents()
