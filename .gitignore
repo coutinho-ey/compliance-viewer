@@ -36,4 +36,4 @@ docker-compose.yml
 *~
 
 # Data
-data/chroma_dbdata/chroma_db/
+data/
