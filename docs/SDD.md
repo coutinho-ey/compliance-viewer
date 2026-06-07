@@ -5,7 +5,11 @@
 
 ## 1. Objetivo
 
-Construir um serviço especialista em formato de API REST que simula um analista de compliance financeiro, fornecendo análise automatizada de recomendações de investimento usando RAG (Retrieval-Augmented Generation) + LLM (Azure OpenAI). O sistema recupera contexto normativo relevante da knowledge base antes de cada inferência, garantindo respostas embasadas nas normas da CVM e ANBIMA.
+Construir um sistema especialista em compliance financeiro que evolui em três fases com observabilidade de produção:
+
+- **Projeto 1:** API REST com análise via LLM puro
+- **Projeto 2:** Pipeline RAG robusto — regras vêm da knowledge base, não do código
+- **Projeto 3:** Agente autônomo + observabilidade (OTel + Prometheus + Grafana)
 
 ---
 
@@ -13,9 +17,9 @@ Construir um serviço especialista em formato de API REST que simula um analista
 
 **Contexto:** EY FSO (Financial Services Office) — área de serviços financeiros.
 
-**Dor:** Analistas de compliance revisam manualmente comunicações de investimento para garantir adequação ao perfil de risco do cliente. O processo é lento, caro e sujeito a falhas humanas. Além disso, regras hardcoded no prompt tornam o sistema difícil de atualizar e impossível de auditar — não é possível apontar a cláusula exata da norma que embasou uma decisão.
+**Dor:** Analistas de compliance revisam manualmente comunicações de investimento para garantir adequação ao perfil de risco do cliente. O processo é lento, caro e sujeito a falhas humanas. Regras hardcoded tornam o sistema difícil de atualizar e impossível de auditar.
 
-**Solução:** API que automatiza a análise inicial recuperando trechos normativos oficiais antes de cada inferência, identificando potenciais violações em segundos com rastreabilidade completa das fontes utilizadas.
+**Solução:** Sistema que automatiza a análise de conformidade recuperando trechos normativos oficiais antes de cada inferência, decidindo e agindo de forma autônoma, com rastreabilidade completa e métricas de produção.
 
 ---
 
@@ -24,21 +28,25 @@ Construir um serviço especialista em formato de API REST que simula um analista
 ### Incluído
 - Endpoint `POST /api/v1/analyze` para análise de recomendações
 - Suporte a 3 perfis de risco: conservador, moderado, arrojado
-- Pipeline RAG: ingestão, retrieval e re-ranking da knowledge base
-- Resposta estruturada com conformidade, risco, produtos, justificativa, fontes e confidence score
-- Prompt Engineering: Many-Shot, Chain-of-Thought e Prompt Chaining
-- Script de avaliação da qualidade do RAG
-- Documentação automática via Swagger UI
-- Testes unitários e de integração
+- Pipeline RAG: RAG Fusion, retrieval e re-ranking híbrido
+- Confidence score dinâmico
+- Prompt não-estático (regras via RAG, autoatualização)
+- Agente autônomo LangGraph com guardrail
+- Ferramentas expostas via FastMCP (protocolo MCP)
+- OpenTelemetry tracing (FileSpanExporter)
+- Prometheus métricas + Grafana dashboard
+- Avaliação: notebooks before/after re-ranking + RAGAS com ground truth
+- Testes de integração (serviço e agente)
+- Indicador de automação (70% em batch de 10 minutas)
 - Containerização com Docker
 
 ### Melhorias Futuras
-- Agente autônomo para decisões complexas (Projeto 3)
 - Autenticação e autorização
 - Persistência de resultados em banco de dados
-- Cache de respostas para análises idênticas
-- Retry automático para rate limit do Azure
-- Substituição do SimpleEmbedding por modelo semântico quando a rede permitir
+- Monitor event-driven (watchdog) em vez de polling
+- Cross-encoder para re-ranking mais preciso
+- Remoção do ruído da knowledge base (e-mails de cliente)
+- Prometheus multiprocess para métricas do agente/monitor
 
 ---
 
@@ -50,13 +58,20 @@ Construir um serviço especialista em formato de API REST que simula um analista
 | Framework | FastAPI |
 | Servidor | Uvicorn (ASGI) |
 | LLM | Azure OpenAI (GPT-4) |
+| Embeddings | Azure OpenAI (text-embedding-ada-002, 1536 dims) |
 | Structured Output | Instructor |
 | Validação | Pydantic v2 |
-| Vector DB | ChromaDB (local, persistente) |
-| Embeddings | SimpleEmbedding (numpy) |
+| Vector DB | ChromaDB (local, persistente, cosseno) |
+| Chunking | LangChain RecursiveCharacterTextSplitter |
 | Extração de PDF | pypdf |
+| Orquestração de Agente | LangGraph |
+| Protocolo de Ferramentas | FastMCP (Model Context Protocol) |
+| Avaliação RAG | RAGAS 0.1.21 + datasets + langchain-openai |
+| Tracing | OpenTelemetry SDK (FileSpanExporter) |
+| Métricas | prometheus-client |
+| Dashboard | Grafana + Prometheus (Docker Compose) |
 | Containerização | Docker |
-| Testes | pytest + unittest.mock |
+| Testes | pytest |
 
 ---
 
@@ -64,86 +79,97 @@ Construir um serviço especialista em formato de API REST que simula um analista
 
 ```
 compliance-viewer/
-├── .env                          # Credenciais Azure (não versionado)
+├── .env                              # Credenciais Azure (não versionado)
 ├── .gitignore
 ├── Dockerfile
 ├── requirements.txt
-├── conftest.py                   # Configuração global do pytest
+├── docker-compose.observability.yml  # Stack Prometheus + Grafana
+├── prometheus.yml                    # Configuração de scraping
 ├── src/
-│   ├── __init__.py
-│   ├── main.py                   # App FastAPI — ponto de entrada
+│   ├── main.py                       # App FastAPI + endpoint /metrics
 │   ├── api/
-│   │   ├── __init__.py
-│   │   ├── router.py             # Endpoints da API + tratamento de erros
+│   │   ├── router.py                 # Endpoints + record_analysis()
 │   │   └── schemas/
-│   │       ├── __init__.py
-│   │       └── analysis.py       # Contratos Pydantic (Request/Response)
+│   │       └── analysis.py           # Contratos Pydantic
 │   ├── core/
+│   │   └── llm_client.py             # Azure OpenAI + OTel span
+│   ├── observability/
 │   │   ├── __init__.py
-│   │   └── llm_client.py         # Cliente Azure OpenAI com structured output
+│   │   └── observability.py          # OTel tracer + Prometheus metrics
 │   ├── services/
-│   │   ├── __init__.py
-│   │   └── complience_service.py # Orquestra RAG + LLM + Prompt Chaining
+│   │   └── complience_service.py     # RAG Fusion + LLM + Confidence Dinâmico
 │   ├── rag/
-│   │   ├── __init__.py
-│   │   ├── ingestion.py          # Pipeline de ingestão da knowledge base
-│   │   ├── retrieval.py          # Retrieval + re-ranking híbrido
-│   │   └── evaluate.py           # Avaliação da qualidade do RAG
-│   └── agents/                   # Reservado para Projeto 3
-│       └── __init__.py
+│   │   ├── ingestion.py              # Pipeline de ingestão
+│   │   ├── retrieval.py              # Retrieval + re-ranking híbrido
+│   │   └── evaluate.py              # Avaliação do RAG
+│   └── agents/
+│       ├── compliance_agent.py       # Grafo LangGraph + guardrail
+│       ├── tools.py                  # Tools com @traced
+│       ├── monitor.py                # Loop de vigilância data/input/
+│       └── mcp_server.py             # Servidor FastMCP
 ├── tests/
-│   ├── test_integration.py       # Testes ponta a ponta com LLM real
-│   └── test_unit.py              # Testes unitários com mock do LLM
-├── data/
-│   ├── chroma_db/                # Base vetorial ChromaDB (gerada pela ingestão)
+│   ├── test_unity.py                 # Unitários P1 (mock do LLM)
+│   ├── test_integration.py           # Integração P1 (LLM real via TestClient)
+│   ├── test_service.py               # Integração do serviço RAG P2 (2 testes)
+│   └── test_agent.py                 # Integração do agente LangGraph P3 (3 testes)
+├── scripts/
+│   └── run_batch.py                  # Batch runner + indicador de automação
+├── notebooks/
+│   ├── rag_ingestion_explained.ipynb
+│   ├── rag_evaluation.ipynb
+│   └── rag_ragas_evaluation.ipynb
+├── data/                             # Gerado localmente — não versionado
+│   ├── chroma_db/
 │   ├── input/
-│   └── output/
+│   ├── output/
+│   │   ├── approved/
+│   │   └── rejected_for_review/
+│   └── logs/
+│       ├── monitor.log
+│       ├── alerts.log
+│       ├── traces.log                # Spans OTel
+│       └── batch_report.txt
 ├── docs/
 │   ├── architecture.md
 │   ├── decisions.md
-│   ├── DEVELOPER_GUIDE.md
-│   └── SDD.md
+│   ├── rag_evaluation.md
+│   ├── SDD.md
+│   └── DEVELOPER_GUIDE.md
 └── knowledge_base/
     ├── anbima_codigo_distribuicao_produtos_Investimento.pdf
     ├── resol_030_cvm.pdf
-    ├── email_analise_cliente_01.txt
-    ├── manual_comunicacao_cliente_v1.0.txt
     ├── politica_adequacao_investimento_v1.2.txt
-    └── politica_investimento_agressivo_v1.0.txt
+    ├── politica_investimento_agressivo_v1.0.txt
+    ├── email_analise_cliente_01.txt
+    └── manual_comunicacao_cliente_v1.0.txt
 ```
 
 ---
 
 ## 6. Contrato da API
 
-### Endpoint Principal
-
 **`POST /api/v1/analyze`**
 
-**Request:**
 ```json
+// Request
 {
-  "text": "Recomendo alocar 100% do patrimônio em ações da Petrobras.",
+  "text": "Recomendo alocar 100% em ações da Petrobras.",
   "client_profile": "conservador",
   "client_id": "cliente-001"
 }
-```
 
-**Response (200):**
-```json
+// Response (200)
 {
   "is_compliant": false,
   "risk_level": "alto",
-  "reason": "Ações são instrumentos de renda variável, incompatíveis com perfil conservador.",
+  "reason": "Ações são incompatíveis com perfil conservador conforme Art. 53 do Código ANBIMA.",
   "mentioned_products": ["Ações Petrobras"],
-  "recommendations": ["Substituir por Tesouro Direto ou CDB de banco sólido."],
+  "recommendations": ["Substituir por Tesouro Direto ou CDB."],
   "source_documents": ["anbima_codigo_distribuicao_produtos_Investimento.pdf"],
-  "source_chunk_ids": ["anbima_codigo_distribuicao_produtos_Investimento.pdf_chunk_42"],
-  "confidence_score": 0.97
+  "source_chunk_ids": ["anbima_codigo_distribuicao_produtos_Investimento.pdf_chunk_166"],
+  "confidence_score": 0.812
 }
 ```
-
-### Códigos de Resposta
 
 | Código | Situação |
 |---|---|
@@ -152,83 +178,111 @@ compliance-viewer/
 | 502 | Falha na comunicação com o LLM |
 | 500 | Erro interno inesperado |
 
-### Perfis de Risco Suportados
+---
 
-| Perfil | Produtos aceitos |
+## 7. Pipeline RAG (Projeto 2)
+
+### Ingestão
+- LangChain RecursiveCharacterTextSplitter (chunk_size=500, overlap=50)
+- Azure text-embedding-ada-002 (1536 dims)
+- ChromaDB, espaço cosseno, 321 chunks
+- `python -m src.rag.ingestion`
+
+### RAG Fusion
+- LLM gera 4 variações semânticas da query
+- Retrieval para cada variação, consolidação e re-ranking final
+
+### Retrieval e Re-ranking
+- TOP_K_RETRIEVAL=10 chunks por busca
+- Re-ranking: `0.6 × semântico + 0.4 × lexical`
+- TOP_K_FINAL=3 chunks para o prompt
+
+### Confidence Dinâmico
+```
+confidence = 0.5 × média(similarity_score) + 0.5 × llm_confidence
+```
+
+---
+
+## 8. Agente Autônomo (Projeto 3)
+
+| Arquivo | Responsabilidade |
 |---|---|
-| conservador | Renda fixa e fundos de baixo risco |
-| moderado | Renda fixa, fundos balanceados e até 30% em renda variável |
-| arrojado | Todos os produtos, incluindo derivativos e criptomoedas |
+| `tools.py` | 3 ferramentas atômicas com @traced |
+| `compliance_agent.py` | Grafo LangGraph + guardrail (confidence < 0.5) |
+| `monitor.py` | Polling data/input/ a cada 5s |
+| `mcp_server.py` | FastMCP com 3 tools via protocolo MCP |
+
+### Indicador de Automação
+- 10 minutas processadas: **70% automação**, 30% intervenção humana, 0 crashes
 
 ---
 
-## 7. Pipeline RAG
+## 9. Observabilidade (Bônus Projeto 3)
 
-### Ingestão (`src/rag/ingestion.py`)
-- Lê todos os `.pdf` e `.txt` da `knowledge_base/`
-- Divide em chunks de 500 chars com overlap de 50
-- Gera embeddings via `SimpleEmbedding` (numpy, sem downloads externos)
-- Persiste no ChromaDB em `data/chroma_db/`
-- Execução: `python -m src.rag.ingestion`
+### OpenTelemetry Tracing
+- `@traced` decorator nas 3 tools de `tools.py`
+- Span manual em `llm_client.py` (duração, modelo, tokens, status)
+- FileSpanExporter → `data/logs/traces.log`
+- Funciona offline, sem dependência de rede
 
-### Retrieval (`src/rag/retrieval.py`)
-- Busca os 10 chunks mais similares no ChromaDB
-- Aplica re-ranking híbrido: 60% semântico + 40% lexical
-- Retorna os top 3 chunks para o service
+### Prometheus Métricas
+- Registradas no processo da API (single-process, sem multiprocess)
+- `record_analysis()` chamado no `router.py` após cada `/analyze`
+- Expostas via `GET /metrics`
 
-### Prompt Chaining (`complience_service.py`)
-- Se `confidence_score < 0.7`, dispara segundo chain de refinamento
-- Caso contrário, retorna direto — sem custo extra
+| Métrica | Tipo |
+|---|---|
+| `compliance_analyses_total` | Counter |
+| `compliance_analysis_duration_seconds` | Histogram |
+| `compliance_automation_rate` | Gauge |
+| `compliance_llm_tokens_total` | Counter |
+
+### Grafana Dashboard
+```bash
+docker-compose -f docker-compose.observability.yml up -d
+# Prometheus: http://localhost:9090
+# Grafana:    http://localhost:3000  (admin/compliance123)
+```
 
 ---
 
-## 8. Tratamento de Erros
+## 10. Tratamento de Erros
 
 | Situação | Camada | Tratamento |
 |---|---|---|
-| Falha no retrieval ou LLM | service | Lança `RuntimeError` |
-| RuntimeError no router | api | Retorna HTTP 502 Bad Gateway |
-| Erro inesperado no router | api | Loga traceback, retorna HTTP 500 |
-| Payload inválido | api | Pydantic retorna automaticamente HTTP 422 |
+| Falha no LLM | service | Lança RuntimeError |
+| RuntimeError | api | HTTP 502 |
+| Erro inesperado | api | HTTP 500 |
+| Payload inválido | api | HTTP 422 (Pydantic) |
+| Erro no analyze_document | agente | Capturado, decide → escalate_human |
+| JSON inválido na minuta | agente | ValueError capturado, guardrail ativa |
 
 ---
 
-## 9. Estratégia de Testes
+## 11. Como Rodar
 
-### Testes Unitários (3 testes)
-- LLM mockado com `unittest.mock` — sem chamadas reais ao Azure
-- Rápidos, sem custo de API e sem dependência de internet
-- Cobrem: caso não-conforme, caso conforme, JSON inválido do LLM
-
-### Testes de Integração (4 testes)
-- Chamadas reais ao Azure OpenAI via `TestClient` do FastAPI
-- Validam o fluxo ponta a ponta com o modelo real
-- Cobrem: não-conforme, conforme, health check, payload inválido
-
-### Avaliação do RAG
-- 8 queries de avaliação cobrindo os 3 perfis
-- Métricas: Source Hit Rate e Avg Score Global
-- Execução: `python -m src.rag.evaluate`
-
----
-
-## 10. Deploy
-
-### Pré-requisito — Ingestão
 ```bash
+# 1. Popular o banco
 python -m src.rag.ingestion
-```
 
-### Local (desenvolvimento)
-```bash
+# 2. API REST
 uvicorn src.main:app --reload
-```
 
-### Docker (produção)
-```bash
-sudo docker build -t complianceviewer:project2 .
-DATA_PATH=$(pwd)/data
-sudo docker run -p 8000:8000 --env-file .env -v "$DATA_PATH:/app/data" complianceviewer:project2
-```
+# 3. Agente (terminal separado)
+python -m src.agents.monitor
 
-> O volume `-v` é obrigatório para montar o ChromaDB gerado na ingestão dentro do container.
+# 4. Batch de automação
+python -m scripts.run_batch
+
+# 5. Testes
+pytest tests/test_service.py -v -s
+pytest tests/test_agent.py -v -s
+
+# 6. Observabilidade
+docker-compose -f docker-compose.observability.yml up -d
+
+# 7. Docker (produção)
+docker build -t complianceviewer:project3 .
+docker run -p 8000:8000 --env-file .env -v $(pwd)/data:/app/data complianceviewer:project3
+```
