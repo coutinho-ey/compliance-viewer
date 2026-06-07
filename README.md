@@ -1,6 +1,6 @@
 # 🔍 Compliance Viewer
 
-Sistema especialista de análise automatizada de recomendações de investimento, combinando **RAG (Retrieval-Augmented Generation)** + **LLM (Azure OpenAI)** + **Agente Autônomo** para simular e automatizar o trabalho de um analista de compliance financeiro embasado em documentos normativos oficiais.
+Sistema especialista de análise automatizada de recomendações de investimento, combinando **RAG (Retrieval-Augmented Generation)** + **LLM (Azure OpenAI)** + **Agente Autônomo** + **Observabilidade** para simular e automatizar o trabalho de um analista de compliance financeiro embasado em documentos normativos oficiais.
 
 ---
 
@@ -32,6 +32,7 @@ Compliance Viewer    →    RAG Pipeline     →      Agente Autônomo
 
 - Python 3.11+
 - Git
+- Docker Desktop
 - Credenciais válidas do Azure OpenAI
 
 ### 2. Instalação
@@ -72,7 +73,7 @@ Antes de subir a API ou o agente, popule o ChromaDB:
 python -m src.rag.ingestion
 ```
 
-> Execute sempre que adicionar documentos à `knowledge_base/`. A pasta `data/` (banco vetorial) está no `.gitignore` — cada desenvolvedor precisa gerar localmente.
+> Execute sempre que adicionar documentos à `knowledge_base/`. A pasta `data/` está no `.gitignore` — cada desenvolvedor precisa gerar localmente.
 
 ### 5. API REST
 
@@ -101,6 +102,27 @@ O monitor varre `data/input/` a cada 5 segundos. Coloque uma minuta `.json` na p
 }
 ```
 
+### 7. Observabilidade (Prometheus + Grafana)
+
+Com o Docker Desktop rodando:
+
+```bash
+docker-compose -f docker-compose.observability.yml up -d
+```
+
+| Serviço | URL | Credenciais |
+|---|---|---|
+| Prometheus | http://localhost:9090 | — |
+| Grafana | http://localhost:3000 | admin / compliance123 |
+| Métricas (API) | http://localhost:8000/metrics | — |
+
+No Grafana, configure o data source Prometheus com URL `http://prometheus:9090` e crie painéis com as métricas `compliance_*`.
+
+Para parar:
+```bash
+docker-compose -f docker-compose.observability.yml down
+```
+
 ---
 
 ## 🐳 Docker
@@ -126,14 +148,19 @@ compliance-viewer/
 ├── .gitignore
 ├── Dockerfile
 ├── requirements.txt
+├── docker-compose.observability.yml  # Stack Prometheus + Grafana
+├── prometheus.yml                    # Configuração de scraping
 ├── src/
-│   ├── main.py                       # App FastAPI — ponto de entrada
+│   ├── main.py                       # App FastAPI + endpoint /metrics
 │   ├── api/
-│   │   ├── router.py                 # Endpoints + tratamento de erros HTTP
+│   │   ├── router.py                 # Endpoints + métricas Prometheus
 │   │   └── schemas/
 │   │       └── analysis.py           # Contratos Pydantic (Request/Response)
 │   ├── core/
-│   │   └── llm_client.py             # Cliente Azure OpenAI + Instructor
+│   │   └── llm_client.py             # Cliente Azure OpenAI + OTel tracing
+│   ├── observability/
+│   │   ├── __init__.py
+│   │   └── observability.py          # OTel (FileSpanExporter) + Prometheus metrics
 │   ├── services/
 │   │   └── complience_service.py     # RAG Fusion + LLM + Confidence Dinâmico
 │   ├── rag/
@@ -141,13 +168,15 @@ compliance-viewer/
 │   │   ├── retrieval.py              # Retrieval + re-ranking híbrido
 │   │   └── evaluate.py              # Avaliação da qualidade do RAG
 │   └── agents/
-│       ├── compliance_agent.py       # Grafo LangGraph + guardrail
-│       ├── tools.py                  # Ferramentas atômicas do agente
+│       ├── compliance_agent.py       # Grafo LangGraph + guardrail + métricas
+│       ├── tools.py                  # Ferramentas atômicas com @traced
 │       ├── monitor.py                # Loop de vigilância data/input/
 │       └── mcp_server.py             # Servidor FastMCP (protocolo MCP)
 ├── tests/
-│   ├── test_service.py               # Integração do serviço RAG (2 testes)
-│   └── test_agent.py                 # Integração do agente LangGraph (3 testes)
+│   ├── test_unity.py                 # Unitários P1 (mock do LLM)
+│   ├── test_integration.py           # Integração P1 (LLM real via TestClient)
+│   ├── test_service.py               # Integração do serviço RAG P2 (2 testes)
+│   └── test_agent.py                 # Integração do agente LangGraph P3 (3 testes)
 ├── scripts/
 │   └── run_batch.py                  # Batch runner + indicador de automação
 ├── notebooks/
@@ -163,18 +192,21 @@ compliance-viewer/
 │   └── logs/
 │       ├── monitor.log               # Log do agente em tempo real
 │       ├── alerts.log                # Alertas gerados pelo agente
+│       ├── traces.log                # Spans OpenTelemetry (tracing)
 │       └── batch_report.txt          # Relatório do batch de automação
 ├── docs/
-│   ├── architecture.md               # Diagrama e fluxo da arquitetura completa
-│   ├── decisions.md                  # Registro de decisões técnicas (ADRs)
-│   ├── rag_evaluation.md             # Avaliação antes/depois do re-ranking
-│   ├── SDD.md                        # Solution Design Document
-│   └── DEVELOPER_GUIDE.md            # Guia do desenvolvedor
+│   ├── architecture.md
+│   ├── decisions.md
+│   ├── rag_evaluation.md
+│   ├── SDD.md
+│   └── DEVELOPER_GUIDE.md
 └── knowledge_base/
     ├── anbima_codigo_distribuicao_produtos_Investimento.pdf
     ├── resol_030_cvm.pdf
     ├── politica_adequacao_investimento_v1.2.txt
-    └── politica_investimento_agressivo_v1.0.txt
+    ├── politica_investimento_agressivo_v1.0.txt
+    ├── email_analise_cliente_01.txt          # e-mail de cliente (ruído detectado pelo RAGAS)
+    └── manual_comunicacao_cliente_v1.0.txt   # manual interno de comunicação
 ```
 
 ---
@@ -185,6 +217,7 @@ compliance-viewer/
 |---|---|---|
 | POST | `/api/v1/analyze` | Analisa uma recomendação de investimento |
 | GET | `/api/v1/health` | Health check da API |
+| GET | `/metrics` | Métricas Prometheus |
 
 ### Exemplo de Request
 
@@ -212,7 +245,7 @@ POST /api/v1/analyze
 }
 ```
 
-> O `confidence_score` é **dinâmico**: calculado como 50% da similaridade dos chunks recuperados + 50% da autoavaliação do LLM. Não é um número fixo.
+> O `confidence_score` é **dinâmico**: 50% da similaridade dos chunks recuperados + 50% da autoavaliação do LLM.
 
 ### Perfis de Risco Suportados
 
@@ -226,19 +259,15 @@ POST /api/v1/analyze
 
 ## 🤖 Agente Autônomo
 
-O agente monitora `data/input/`, processa cada minuta e age de acordo com o resultado:
-
 | Decisão | Condição | Ação |
 |---|---|---|
 | `approved` | `is_compliant=true` e `confidence ≥ 0.5` | Move para `data/output/approved/` |
 | `rejected` | `is_compliant=false` e `confidence ≥ 0.5` | Move para `data/output/rejected_for_review/` + alerta |
 | `escalate_human` | `confidence < 0.5` ou erro | Alerta em `data/logs/alerts.log` — não move |
 
-**Guardrail:** abaixo de 0.5 de confidence o agente nunca decide sozinho, independente do veredito do LLM.
+**Guardrail:** abaixo de 0.5 de confidence o agente nunca decide sozinho.
 
 ### Indicador de Automação
-
-Batch de 10 minutas de teste:
 
 | Métrica | Resultado |
 |---|---|
@@ -246,13 +275,35 @@ Batch de 10 minutas de teste:
 | Intervenção humana | 30% |
 | Erros / crashes | 0 |
 
-**Antes:** 100% de análise manual.
-**Depois:** 70% automatizado, 30% requer atenção humana — zero falhas não tratadas.
-
-Para rodar o batch:
 ```bash
 python -m scripts.run_batch
 ```
+
+---
+
+## 📊 Observabilidade
+
+### OpenTelemetry (Tracing)
+Cada chamada ao LLM e cada tool do agente gera um span registrado em `data/logs/traces.log`:
+
+```
+[TRACE] llm.invoke | status=OK | duration=15234.1ms | {'llm.model': 'gpt-4o', ...}
+[TRACE] tool.analyze_compliance | status=OK | duration=16891.2ms | {}
+[TRACE] tool.move_file | status=OK | duration=12.3ms | {}
+```
+
+### Prometheus (Métricas)
+Disponível em `GET /metrics`. Métricas de negócio:
+
+| Métrica | Tipo | Descrição |
+|---|---|---|
+| `compliance_analyses_total` | Counter | Total de análises por resultado e perfil |
+| `compliance_analysis_duration_seconds` | Histogram | Duração das análises |
+| `compliance_automation_rate` | Gauge | Taxa de automação acumulada |
+| `compliance_llm_tokens_total` | Counter | Total de tokens usados |
+
+### Grafana (Dashboard)
+Sobe com `docker-compose -f docker-compose.observability.yml up -d` e acessa `http://localhost:3000`.
 
 ---
 
@@ -260,24 +311,19 @@ python -m scripts.run_batch
 
 O projeto utiliza **Azure OpenAI text-embedding-ada-002** (1536 dimensões, espaço cosseno).
 
-> ⚠️ **Não troque o modelo de embedding sem reingestão completa.** Se o modelo mudar, delete `data/chroma_db/` e rode `python -m src.rag.ingestion` novamente. O vetor de busca e o vetor indexado precisam estar no mesmo espaço.
+> ⚠️ **Não troque o modelo de embedding sem reingestão completa.** Delete `data/chroma_db/` e rode `python -m src.rag.ingestion` novamente.
 
 ---
 
 ## 🧪 Testes
 
 ```bash
-# Testa o serviço RAG (calls reais ao Azure)
-pytest tests/test_service.py -v -s    # 2 passed
-
-# Testa o agente LangGraph (calls reais ao Azure)
-pytest tests/test_agent.py -v -s      # 3 passed
-
-# Avalia o RAG
+pytest tests/test_unity.py -v            # unitários P1 (mock LLM)
+pytest tests/test_integration.py -v      # integração P1 (LLM real)
+pytest tests/test_service.py -v -s       # 2 passed (P2 — serviço RAG)
+pytest tests/test_agent.py -v -s         # 3 passed (P3 — agente LangGraph)
 python -m src.rag.evaluate
 ```
-
-Os notebooks de avaliação ficam em `notebooks/` e devem ser abertos no Jupyter.
 
 ---
 
@@ -298,8 +344,8 @@ Os notebooks de avaliação ficam em `notebooks/` e devem ser abertos no Jupyter
 | Protocolo tools | FastMCP | Model Context Protocol formal, interoperável |
 | Guardrail | confidence < 0.5 → escala | Em compliance, melhor escalar que errar |
 | Monitor | Polling 5s | Simples, sem dependência externa |
-
-Para detalhes completos, veja [`docs/decisions.md`](docs/decisions.md).
+| Tracing | OTel + FileSpanExporter | Sem serviço externo, funciona em rede EY |
+| Métricas | Prometheus single-process | Simples, exposto via /metrics, scrapado pelo Grafana |
 
 ---
 
@@ -336,6 +382,12 @@ Para detalhes completos, veja [`docs/decisions.md`](docs/decisions.md).
 - [x] Batch runner + indicador de automação (70%)
 - [x] Testes de integração do agente (3 testes)
 - [x] `docs/decisions.md` atualizado com design do agente e contratos MCP
+
+**Bônus — Observabilidade**
+- [x] OpenTelemetry tracing com `@traced` nas tools e LLM (`data/logs/traces.log`)
+- [x] Prometheus métricas de negócio (`/metrics`)
+- [x] Grafana dashboard com dados reais (`localhost:3000`)
+- [x] Docker Compose para stack de observabilidade
 
 ---
 
