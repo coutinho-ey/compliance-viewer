@@ -170,6 +170,21 @@ def fused_retrieval(query: str, llm_client: AzureModel) -> list[dict]:
     return reranked[:3]
 
 
+def compute_dynamic_confidence(chunks: list[dict], llm_confidence: float) -> float:
+    """
+    Confidence dinâmico: combina o sinal real de recuperação (qualidade dos
+    chunks recuperados) com a autoavaliação do LLM. Evita o número fixo/inventado.
+
+    - retrieval_signal: média da similaridade dos chunks usados (sinal objetivo)
+    - llm_confidence: autoavaliação do modelo (sinal subjetivo)
+    - resultado: 50% objetivo + 50% subjetivo
+    """
+    if not chunks:
+        return 0.0
+    retrieval_signal = sum(c["similarity_score"] for c in chunks) / len(chunks)
+    return round(0.5 * retrieval_signal + 0.5 * llm_confidence, 3)
+
+
 # ── Serviço principal ──────────────────────────────────────────────────────────
 
 def analyze_recommendation(request: AnalysisRequest) -> AnalysisResult:
@@ -196,6 +211,8 @@ def analyze_recommendation(request: AnalysisRequest) -> AnalysisResult:
             system_prompt=SYSTEM_PROMPT,
             response_model=AnalysisResult,
         )
+        # Confidence dinâmico: ancora no sinal de recuperação, não só no LLM
+        result.confidence_score = compute_dynamic_confidence(chunks, result.confidence_score)
 
         # Prompt chaining: baixa confiança dispara análise refinada
         if result.confidence_score < CONFIDENCE_THRESHOLD:
@@ -211,6 +228,8 @@ def analyze_recommendation(request: AnalysisRequest) -> AnalysisResult:
                 system_prompt=SYSTEM_PROMPT,
                 response_model=AnalysisResult,
             )
+            # Recalcula o confidence dinâmico após o refino
+            result.confidence_score = compute_dynamic_confidence(chunks, result.confidence_score)
 
         # Rastreabilidade: documentos e chunks usados + score de similaridade
         result.source_documents = list({c["source"] for c in chunks})
