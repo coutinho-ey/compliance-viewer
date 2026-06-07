@@ -15,10 +15,10 @@ O Compliance Viewer é um sistema de análise de conformidade financeira compost
 ## Diagrama de Arquitetura Completo
 
 ```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                     CLIENTES / TRIGGERS                                  │
-│      Swagger UI / curl           |        Monitor (data/input/)          │
-└──────────────┬───────────────────┘──────────────────┬────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────┐
+│                     CLIENTES / TRIGGERS                                   │
+│      Swagger UI / curl           |        Monitor (data/input/)           │
+└──────────────┬───────────────────┘──────────────────┬─────────────────────┘
                │ HTTP POST /api/v1/analyze             │ arquivo .json
                ▼                                       ▼
 ┌──────────────────────────────┐   ┌────────────────────────────────────────┐
@@ -31,31 +31,31 @@ O Compliance Viewer é um sistema de análise de conformidade financeira compost
 │  → Contratos Pydantic        │   │  → @traced: analyze, move, alert       │
 └──────────────┬───────────────┘   │  src/agents/mcp_server.py              │
                │                   │  → FastMCP (protocolo MCP)             │
-               └──────────┬────────┘                                        │
-                          │ analyze_recommendation()                        │
-                          ▼                                                 │
-┌─────────────────────────────────────────────────────────────────────────┤
-│                       CAMADA DE SERVIÇO                                  │
-│  src/services/complience_service.py                                      │
-│  → RAG Fusion: 4 variações da query via LLM                              │
-│  → fused_retrieval(): consolida chunks de múltiplas queries              │
-│  → Prompt (Many-Shot + Chain-of-Thought + contexto normativo)            │
-│  → confidence = 0.5×retrieval_signal + 0.5×llm_confidence               │
-│  → Prompt Chaining: se confidence < 0.7, dispara refino                  │
-│  → Popula source_documents e source_chunk_ids                            │
-└──────────────┬──────────────────────────────┬───────────────────────────┘
+               └──────────┬────────┘────────────────────────────────────────┘
+                          │ analyze_recommendation()                        
+                          ▼                                                 
+┌───────────────────────────────────────────────────────────────────────────┐
+│                       CAMADA DE SERVIÇO                                   │
+│  src/services/complience_service.py                                       │
+│  → RAG Fusion: 4 variações da query via LLM                               │
+│  → fused_retrieval(): consolida chunks de múltiplas queries               │
+│  → Prompt (Many-Shot + Chain-of-Thought + contexto normativo)             │
+│  → confidence = 0.5×retrieval_signal + 0.5×llm_confidence                 │
+│  → Prompt Chaining: se confidence < 0.7, dispara refino                   │
+│  → Popula source_documents e source_chunk_ids                             │
+└──────────────┬──────────────────────────────┬─────────────────────────────┘
                │ invoke()                     │ fused_retrieval()
                ▼                              ▼
-┌──────────────────────────┐  ┌───────────────────────────────────────────┐
-│       CAMADA CORE        │  │               CAMADA RAG                  │
-│  src/core/llm_client.py  │  │  src/rag/retrieval.py                     │
-│  → Azure OpenAI GPT-4    │  │  → retrieve_chunks(): busca top 10        │
-│  → Instructor (structured│  │    no ChromaDB (cosseno)                  │
+┌──────────────────────────┐  ┌────────────────────────────────────────────┐
+│       CAMADA CORE        │  │               CAMADA RAG                   │
+│  src/core/llm_client.py  │  │  src/rag/retrieval.py                      │
+│  → Azure OpenAI GPT-4    │  │  → retrieve_chunks(): busca top 10         │
+│  → Instructor (structured│  │    no ChromaDB (cosseno)                   │
 │    output + retry)       │  │  → rerank_chunks(): 60% semântico          │
-│  → OTel span (duração,   │  │    + 40% lexical                          │
+│  → OTel span (duração,   │  │    + 40% lexical                           │
 │    modelo, tokens)       │  │  → retrieve_and_rerank(): pipeline         │
-└──────────────┬───────────┘  │    completo (top 3 final)                 │
-               │ HTTPS        └──────────────────┬────────────────────────┘
+└──────────────┬───────────┘  │    completo (top 3 final)                  │
+               │ HTTPS        └──────────────────┬─────────────────────────┘
                ▼                                 │ consulta
 ┌──────────────────────────┐                     ▼
 │      AZURE OPENAI        │  ┌───────────────────────────────────────────┐
@@ -66,14 +66,14 @@ O Compliance Viewer é um sistema de análise de conformidade financeira compost
                               └──────────────────┬────────────────────────┘
                                                  │ populado por
                                                  ▼
-                              ┌───────────────────────────────────────────┐
-                              │         PIPELINE DE INGESTÃO              │
-                              │  src/rag/ingestion.py                     │
-                              │  → LangChain RecursiveCharacterTextSplitter│
-                              │    chunk_size=500, overlap=50             │
-                              │  → Azure text-embedding-ada-002           │
-                              │  → ChromaDB (cosseno)                     │
-                              └──────────────────┬────────────────────────┘
+                              ┌─────────────────────────────────────────────┐
+                              │         PIPELINE DE INGESTÃO                │
+                              │  src/rag/ingestion.py                       │
+                              │  → LangChain RecursiveCharacterTextSplitter │
+                              │    chunk_size=500, overlap=50               │
+                              │  → Azure text-embedding-ada-002             │
+                              │  → ChromaDB (cosseno)                       │
+                              └──────────────────┬──────────────────────────┘
                                                  │ lê
                                                  ▼
                               ┌───────────────────────────────────────────┐
@@ -92,22 +92,22 @@ O Compliance Viewer é um sistema de análise de conformidade financeira compost
 │  src/observability/observability.py                                     │
 │  ┌─────────────────────────────┐  ┌──────────────────────────────────┐  │
 │  │   OpenTelemetry (Tracing)   │  │   Prometheus (Métricas)          │  │
-│  │  @traced nas tools          │  │  compliance_analyses_total        │  │
-│  │  span manual no llm_client  │  │  compliance_analysis_duration_s   │  │
-│  │  FileSpanExporter           │  │  compliance_automation_rate       │  │
-│  │  → data/logs/traces.log     │  │  compliance_llm_tokens_total      │  │
+│  │  @traced nas tools          │  │  compliance_analyses_total       │  │
+│  │  span manual no llm_client  │  │  compliance_analysis_duration_s  │  │
+│  │  FileSpanExporter           │  │  compliance_automation_rate      │  │
+│  │  → data/logs/traces.log     │  │  compliance_llm_tokens_total     │  │
 │  └─────────────────────────────┘  └──────────────┬───────────────────┘  │
 └──────────────────────────────────────────────────┼──────────────────────┘
                                                    │ GET /metrics
                                                    ▼
-                              ┌───────────────────────────────────────────┐
-                              │         STACK DE VISUALIZAÇÃO             │
-                              │  docker-compose.observability.yml         │
+                              ┌────────────────────────────────────────────┐
+                              │         STACK DE VISUALIZAÇÃO              │
+                              │  docker-compose.observability.yml          │
                               │  Prometheus (localhost:9090)               │
                               │  → scrapa host.docker.internal:8000/metrics│
                               │  Grafana (localhost:3000)                  │
-                              │  → dashboards com métricas compliance_*   │
-                              └───────────────────────────────────────────┘
+                              │  → dashboards com métricas compliance_*    │
+                              └────────────────────────────────────────────┘
 ```
 
 ---

@@ -24,6 +24,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ── Configuração ───────────────────────────────────────────────────────────────
 INPUT_DIR   = Path("data/input")
 REPORT_PATH = Path("data/logs/batch_report.txt")
 SLEEP_SEC   = 15  # pausa entre casos para evitar rate limit do Azure
@@ -77,24 +78,15 @@ CASOS = [
 ]
 
 
-# ── Runner ─────────────────────────────────────────────────────────────────────
+# ── Função principal ───────────────────────────────────────────────────────────
 
-def criar_minuta(caso: dict) -> str:
-    INPUT_DIR.mkdir(parents=True, exist_ok=True)
-    file_name = f"minuta_{caso['id']}.json"
-    path = INPUT_DIR / file_name
-    path.write_text(
-        json.dumps({
-            "client_id":      caso["id"],
-            "client_profile": caso["profile"],
-            "text":           caso["text"],
-        }, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    return str(path)
-
-
-def run_batch():
+def run_batch() -> list:
+    """
+    Orquestra o batch completo:
+    1. Cria minutas de teste em data/input/
+    2. Roda o agente para cada uma
+    3. Coleta os resultados
+    """
     logger.info(f"Iniciando batch com {len(CASOS)} casos.")
     resultados = []
 
@@ -126,15 +118,34 @@ def run_batch():
     return resultados
 
 
-def gerar_relatorio(resultados: list) -> str:
-    total      = len(resultados)
-    aprovados  = sum(1 for r in resultados if r["decision"] == "approved")
-    rejeitados = sum(1 for r in resultados if r["decision"] == "rejected")
-    escalados  = sum(1 for r in resultados if r["decision"] == "escalate_human")
-    erros      = sum(1 for r in resultados if r["decision"] == "error")
+# ── Funções de apoio ───────────────────────────────────────────────────────────
 
-    automatizados   = aprovados + rejeitados
-    taxa_automacao  = (automatizados / total) * 100
+def criar_minuta(caso: dict) -> str:
+    """Cria o arquivo JSON da minuta em data/input/ e retorna o caminho."""
+    INPUT_DIR.mkdir(parents=True, exist_ok=True)
+    file_name = f"minuta_{caso['id']}.json"
+    path = INPUT_DIR / file_name
+    path.write_text(
+        json.dumps({
+            "client_id":      caso["id"],
+            "client_profile": caso["profile"],
+            "text":           caso["text"],
+        }, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return str(path)
+
+
+def gerar_relatorio(resultados: list) -> str:
+    """Consolida os resultados do batch e salva em data/logs/batch_report.txt."""
+    total        = len(resultados)
+    aprovados    = sum(1 for r in resultados if r["decision"] == "approved")
+    rejeitados   = sum(1 for r in resultados if r["decision"] == "rejected")
+    escalados    = sum(1 for r in resultados if r["decision"] == "escalate_human")
+    erros        = sum(1 for r in resultados if r["decision"] == "error")
+
+    automatizados    = aprovados + rejeitados
+    taxa_automacao   = (automatizados / total) * 100
     taxa_intervencao = ((escalados + erros) / total) * 100
 
     linhas = [
@@ -171,6 +182,8 @@ def gerar_relatorio(resultados: list) -> str:
     REPORT_PATH.write_text(relatorio, encoding="utf-8")
     return relatorio
 
+
+# ── Execução ───────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     resultados = run_batch()

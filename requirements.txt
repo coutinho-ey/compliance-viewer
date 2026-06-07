@@ -1,10 +1,31 @@
+# ── API ───────────────────────────────────────────────────────────────────────
 fastapi
 uvicorn[standard]
-pydantic 
+pydantic
 python-dotenv
+ 
+# ── LLM e Structured Output ───────────────────────────────────────────────────
 openai
 instructor
+ 
+# ── RAG ───────────────────────────────────────────────────────────────────────
 chromadb
 pypdf
-sentence-transformers
 langchain-text-splitters
+langchain-core
+ 
+# ── Agente ────────────────────────────────────────────────────────────────────
+langchain
+langgraph
+fastmcp
+ 
+# ── Observabilidade ───────────────────────────────────────────────────────────
+prometheus-client
+opentelemetry-api
+opentelemetry-sdk
+ 
+# ── Avaliação (notebooks RAGAS) ───────────────────────────────────────────────
+ragas==0.1.21
+datasets
+langchain-openai
+nest-asyncio

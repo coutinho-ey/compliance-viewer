@@ -14,38 +14,16 @@ Execução:
 """
 
 import json
-import shutil
 from pathlib import Path
 
 import pytest
 
 from src.agents.compliance_agent import run_agent
 
-# ── Fixtures ───────────────────────────────────────────────────────────────────
-
-INPUT_DIR   = Path("data/input")
-APPROVED    = Path("data/output/approved")
-REJECTED    = Path("data/output/rejected_for_review")
-
-
-def _criar_minuta(file_name: str, client_profile: str, text: str) -> str:
-    """Cria um arquivo de minuta temporário em data/input/ para o teste."""
-    INPUT_DIR.mkdir(parents=True, exist_ok=True)
-    path = INPUT_DIR / file_name
-    path.write_text(
-        json.dumps({"client_id": "TST001", "client_profile": client_profile, "text": text},
-                   ensure_ascii=False),
-        encoding="utf-8",
-    )
-    return str(path)
-
-
-def _limpar(file_name: str):
-    """Remove o arquivo de qualquer pasta onde ele possa ter parado."""
-    for folder in [INPUT_DIR, APPROVED, REJECTED]:
-        target = folder / file_name
-        if target.exists():
-            target.unlink()
+# ── Configuração ───────────────────────────────────────────────────────────────
+INPUT_DIR = Path("data/input")
+APPROVED  = Path("data/output/approved")
+REJECTED  = Path("data/output/rejected_for_review")
 
 
 # ── Testes ─────────────────────────────────────────────────────────────────────
@@ -116,3 +94,25 @@ def test_guardrail_escala_para_humano():
         assert estado.get("error") is not None
     finally:
         _limpar(file_name)
+
+
+# ── Funções de apoio ───────────────────────────────────────────────────────────
+
+def _criar_minuta(file_name: str, client_profile: str, text: str) -> str:
+    """Cria um arquivo de minuta temporário em data/input/ para o teste."""
+    INPUT_DIR.mkdir(parents=True, exist_ok=True)
+    path = INPUT_DIR / file_name
+    path.write_text(
+        json.dumps({"client_id": "TST001", "client_profile": client_profile, "text": text},
+                   ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return str(path)
+
+
+def _limpar(file_name: str):
+    """Remove o arquivo de qualquer pasta onde ele possa ter parado."""
+    for folder in [INPUT_DIR, APPROVED, REJECTED]:
+        target = folder / file_name
+        if target.exists():
+            target.unlink()

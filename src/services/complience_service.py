@@ -15,13 +15,13 @@ import logging
 
 from ..core.llm_client import AzureModel
 from ..api.schemas import AnalysisRequest, AnalysisResult
-from ..rag.retrieval import retrieve_and_rerank, get_azure_client, get_embedding
-from ..rag.retrieval import rerank_chunks, get_collection
+from ..rag.retrieval import retrieve_and_rerank, rerank_chunks
 
 logger = logging.getLogger(__name__)
 
-CONFIDENCE_THRESHOLD = 0.7   # Abaixo disso, dispara o segundo chain
-NUM_QUERY_VARIATIONS = 4     # Quantas variações o RAG Fusion gera
+# ── Configurações ─────────────────────────────────────────────────────────────
+CONFIDENCE_THRESHOLD = 0.7
+NUM_QUERY_VARIATIONS = 4
 
 
 # ── Prompts ───────────────────────────────────────────────────────────────────
@@ -126,66 +126,7 @@ Consulta original: {query}
 """
 
 
-# ── RAG Fusion (função de apoio) ───────────────────────────────────────────────
-
-def generate_query_variations(query: str, llm_client: AzureModel, n: int = NUM_QUERY_VARIATIONS) -> list[str]:
-    """
-    RAG Fusion: pede ao LLM para reescrever a query em N variações semânticas.
-    Múltiplas formulações aumentam a cobertura da recuperação.
-    Retorna a query original + as variações.
-    """
-    prompt = QUERY_REWRITE_PROMPT.format(n=n, query=query)
-    try:
-        response = llm_client.invoke(prompt=prompt)
-        raw = response.choices[0].message.content
-        variations = [line.strip() for line in raw.split("\n") if line.strip()]
-        # Garante a query original na lista e remove duplicatas
-        all_queries = [query] + variations
-        return list(dict.fromkeys(all_queries))[: n + 1]
-    except Exception as exc:
-        logger.warning(f"RAG Fusion falhou, usando query original: {exc}")
-        return [query]
-
-
-def fused_retrieval(query: str, llm_client: AzureModel) -> list[dict]:
-    """
-    Executa RAG Fusion: gera variações da query, recupera chunks para cada uma,
-    consolida removendo duplicatas e re-rankeia o conjunto final.
-    """
-    queries = generate_query_variations(query, llm_client)
-    logger.info(f"RAG Fusion: {len(queries)} variações de query geradas.")
-
-    # Recupera para cada variação e consolida por chunk_id único
-    seen = {}
-    for q in queries:
-        for chunk in retrieve_and_rerank(q, top_k_final=5):
-            key = f"{chunk['source']}_{chunk['chunk_index']}"
-            # Mantém o chunk com maior similaridade caso apareça em múltiplas queries
-            if key not in seen or chunk["similarity_score"] > seen[key]["similarity_score"]:
-                seen[key] = chunk
-
-    # Re-rankeia o conjunto consolidado contra a query original
-    consolidated = list(seen.values())
-    reranked = rerank_chunks(query, consolidated)
-    return reranked[:3]
-
-
-def compute_dynamic_confidence(chunks: list[dict], llm_confidence: float) -> float:
-    """
-    Confidence dinâmico: combina o sinal real de recuperação (qualidade dos
-    chunks recuperados) com a autoavaliação do LLM. Evita o número fixo/inventado.
-
-    - retrieval_signal: média da similaridade dos chunks usados (sinal objetivo)
-    - llm_confidence: autoavaliação do modelo (sinal subjetivo)
-    - resultado: 50% objetivo + 50% subjetivo
-    """
-    if not chunks:
-        return 0.0
-    retrieval_signal = sum(c["similarity_score"] for c in chunks) / len(chunks)
-    return round(0.5 * retrieval_signal + 0.5 * llm_confidence, 3)
-
-
-# ── Serviço principal ──────────────────────────────────────────────────────────
+# ── Função principal ───────────────────────────────────────────────────────────
 
 def analyze_recommendation(request: AnalysisRequest) -> AnalysisResult:
     """
@@ -194,8 +135,7 @@ def analyze_recommendation(request: AnalysisRequest) -> AnalysisResult:
     """
     llm_client = AzureModel()
 
-    # RAG Fusion: recupera contexto a partir de múltiplas variações da query
-    chunks = fused_retrieval(request.text, llm_client)
+    chunks  = fused_retrieval(request.text, llm_client)
     context = "\n\n".join([c["text"] for c in chunks])
 
     user_prompt = USER_PROMPT_TEMPLATE.format(
@@ -211,10 +151,8 @@ def analyze_recommendation(request: AnalysisRequest) -> AnalysisResult:
             system_prompt=SYSTEM_PROMPT,
             response_model=AnalysisResult,
         )
-        # Confidence dinâmico: ancora no sinal de recuperação, não só no LLM
         result.confidence_score = compute_dynamic_confidence(chunks, result.confidence_score)
 
-        # Prompt chaining: baixa confiança dispara análise refinada
         if result.confidence_score < CONFIDENCE_THRESHOLD:
             logger.info(f"Confidence baixo ({result.confidence_score:.2f}). Disparando refino.")
             refinement_prompt = REFINEMENT_PROMPT_TEMPLATE.format(
@@ -228,10 +166,8 @@ def analyze_recommendation(request: AnalysisRequest) -> AnalysisResult:
                 system_prompt=SYSTEM_PROMPT,
                 response_model=AnalysisResult,
             )
-            # Recalcula o confidence dinâmico após o refino
             result.confidence_score = compute_dynamic_confidence(chunks, result.confidence_score)
 
-        # Rastreabilidade: documentos e chunks usados + score de similaridade
         result.source_documents = list({c["source"] for c in chunks})
         result.source_chunk_ids = [f"{c['source']}_chunk_{c['chunk_index']}" for c in chunks]
 
@@ -244,3 +180,54 @@ def analyze_recommendation(request: AnalysisRequest) -> AnalysisResult:
     except Exception as exc:
         logger.error("Erro no serviço de compliance: %s", exc)
         raise RuntimeError(f"Falha no serviço de compliance: {exc}") from exc
+
+
+# ── Funções de apoio ───────────────────────────────────────────────────────────
+
+def fused_retrieval(query: str, llm_client: AzureModel) -> list[dict]:
+    """
+    Executa RAG Fusion: gera variações da query, recupera chunks para cada uma,
+    consolida removendo duplicatas e re-rankeia o conjunto final.
+    """
+    queries = generate_query_variations(query, llm_client)
+    logger.info(f"RAG Fusion: {len(queries)} variações de query geradas.")
+
+    seen = {}
+    for q in queries:
+        for chunk in retrieve_and_rerank(q, top_k_final=5):
+            key = f"{chunk['source']}_{chunk['chunk_index']}"
+            if key not in seen or chunk["similarity_score"] > seen[key]["similarity_score"]:
+                seen[key] = chunk
+
+    consolidated = list(seen.values())
+    reranked     = rerank_chunks(query, consolidated)
+    return reranked[:3]
+
+
+def compute_dynamic_confidence(chunks: list[dict], llm_confidence: float) -> float:
+    """
+    Confidence dinâmico: combina sinal objetivo (retrieval) com subjetivo (LLM).
+    - retrieval_signal: média da similaridade dos chunks usados
+    - resultado: 50% objetivo + 50% subjetivo
+    """
+    if not chunks:
+        return 0.0
+    retrieval_signal = sum(c["similarity_score"] for c in chunks) / len(chunks)
+    return round(0.5 * retrieval_signal + 0.5 * llm_confidence, 3)
+
+
+def generate_query_variations(query: str, llm_client: AzureModel, n: int = NUM_QUERY_VARIATIONS) -> list[str]:
+    """
+    RAG Fusion: pede ao LLM para reescrever a query em N variações semânticas.
+    Retorna a query original + as variações (sem duplicatas).
+    """
+    prompt = QUERY_REWRITE_PROMPT.format(n=n, query=query)
+    try:
+        response   = llm_client.invoke(prompt=prompt)
+        raw        = response.choices[0].message.content
+        variations = [line.strip() for line in raw.split("\n") if line.strip()]
+        all_queries = [query] + variations
+        return list(dict.fromkeys(all_queries))[: n + 1]
+    except Exception as exc:
+        logger.warning(f"RAG Fusion falhou, usando query original: {exc}")
+        return [query]

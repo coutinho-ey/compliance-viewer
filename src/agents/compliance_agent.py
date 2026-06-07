@@ -15,9 +15,11 @@ from typing import Optional, TypedDict
 from langgraph.graph import END, StateGraph
 
 from src.agents.tools import analyze_compliance, create_alert, move_file
+from src.observability.observability import record_agent_decision
 
 logger = logging.getLogger(__name__)
 
+# ── Configuração ───────────────────────────────────────────────────────────────
 GUARDRAIL_THRESHOLD = 0.5  # Abaixo disso: escala para humano
 
 
@@ -29,6 +31,60 @@ class ComplianceState(TypedDict):
     decision:      Optional[str]   # "approved" | "rejected" | "escalate_human"
     action_result: Optional[str]
     error:         Optional[str]
+
+
+# ── Função principal ───────────────────────────────────────────────────────────
+
+def run_agent(file_path: str) -> dict:
+    """
+    Ponto de entrada público do agente.
+    Constrói o grafo, inicializa o estado e executa o pipeline completo.
+    Retorna o estado final com análise, decisão e resultado da ação.
+    """
+    agent = build_agent()
+    initial_state: ComplianceState = {
+        "file_path":     file_path,
+        "analysis":      None,
+        "decision":      None,
+        "action_result": None,
+        "error":         None,
+    }
+    return agent.invoke(initial_state)
+
+
+# ── Montagem do grafo ──────────────────────────────────────────────────────────
+
+def build_agent():
+    """Monta e compila o grafo LangGraph com os 4 nós e as arestas condicionais."""
+    graph = StateGraph(ComplianceState)
+
+    graph.add_node("analyze_document", analyze_document)
+    graph.add_node("decide",           decide)
+    graph.add_node("take_action",      take_action)
+    graph.add_node("log_result",       log_result)
+
+    graph.set_entry_point("analyze_document")
+    graph.add_edge("analyze_document", "decide")
+    graph.add_conditional_edges(
+        "decide",
+        route_decision,
+        {
+            "approved":       "take_action",
+            "rejected":       "take_action",
+            "escalate_human": "take_action",
+        },
+    )
+    graph.add_edge("take_action", "log_result")
+    graph.add_edge("log_result",  END)
+
+    return graph.compile()
+
+
+# ── Roteador condicional ───────────────────────────────────────────────────────
+
+def route_decision(state: ComplianceState) -> str:
+    """Direciona o fluxo baseado na decisão tomada no nó 'decide'."""
+    return state.get("decision", "escalate_human")
 
 
 # ── Nós do grafo ───────────────────────────────────────────────────────────────
@@ -54,7 +110,7 @@ def decide(state: ComplianceState) -> dict:
     if state.get("error"):
         return {"decision": "escalate_human"}
 
-    analysis  = state["analysis"]
+    analysis     = state["analysis"]
     confidence   = analysis.get("confidence_score", 0.0)
     is_compliant = analysis.get("is_compliant", False)
 
@@ -71,12 +127,14 @@ def decide(state: ComplianceState) -> dict:
 
 
 def take_action(state: ComplianceState) -> dict:
-    """Nó 3: move o arquivo e cria alerta se necessário."""
+    """Nó 3: executa a ação física e registra métrica Prometheus."""
     decision   = state["decision"]
     analysis   = state.get("analysis") or {}
     file_path  = state["file_path"]
     file_name  = analysis.get("file_name", file_path)
     confidence = analysis.get("confidence_score", 0.0)
+
+    record_agent_decision(decision)
 
     if decision == "approved":
         result = move_file(file_path, "approved")
@@ -111,54 +169,3 @@ def log_result(state: ComplianceState) -> dict:
         f"resultado={state.get('action_result', '')}"
     )
     return {}
-
-
-# ── Roteador condicional ───────────────────────────────────────────────────────
-
-def route_decision(state: ComplianceState) -> str:
-    return state.get("decision", "escalate_human")
-
-
-# ── Montagem do grafo ──────────────────────────────────────────────────────────
-
-def build_agent():
-    graph = StateGraph(ComplianceState)
-
-    graph.add_node("analyze_document", analyze_document)
-    graph.add_node("decide",           decide)
-    graph.add_node("take_action",      take_action)
-    graph.add_node("log_result",       log_result)
-
-    graph.set_entry_point("analyze_document")
-    graph.add_edge("analyze_document", "decide")
-    graph.add_conditional_edges(
-        "decide",
-        route_decision,
-        {
-            "approved":       "take_action",
-            "rejected":       "take_action",
-            "escalate_human": "take_action",
-        },
-    )
-    graph.add_edge("take_action", "log_result")
-    graph.add_edge("log_result",  END)
-
-    return graph.compile()
-
-
-# ── Ponto de entrada público ───────────────────────────────────────────────────
-
-def run_agent(file_path: str) -> dict:
-    """
-    Executa o agente para um arquivo de minuta de recomendação.
-    Retorna o estado final com análise, decisão e resultado da ação.
-    """
-    agent = build_agent()
-    initial_state: ComplianceState = {
-        "file_path":     file_path,
-        "analysis":      None,
-        "decision":      None,
-        "action_result": None,
-        "error":         None,
-    }
-    return agent.invoke(initial_state)
