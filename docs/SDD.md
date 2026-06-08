@@ -101,7 +101,6 @@ compliance-viewer/
 │   ├── rag/
 │   │   ├── ingestion.py              # Pipeline de ingestão
 │   │   ├── retrieval.py              # Retrieval + re-ranking híbrido
-│   │   └── evaluate.py              # Avaliação do RAG
 │   └── agents/
 │       ├── compliance_agent.py       # Grafo LangGraph + guardrail
 │       ├── tools.py                  # Tools com @traced
@@ -132,7 +131,6 @@ compliance-viewer/
 ├── docs/
 │   ├── architecture.md
 │   ├── decisions.md
-│   ├── rag_evaluation.md
 │   ├── SDD.md
 │   └── DEVELOPER_GUIDE.md
 └── knowledge_base/
