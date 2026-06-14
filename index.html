@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Compliance Checker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #F8F9FA;
+    --surface: #FFFFFF;
+    --border: #E2E8F0;
+    --text: #111827;
+    --muted: #6B7280;
+    --accent: #1E3A5F;
+    --accent-light: #EFF6FF;
+    --green: #16A34A;
+    --green-bg: #F0FDF4;
+    --red: #DC2626;
+    --red-bg: #FEF2F2;
+    --amber: #D97706;
+    --amber-bg: #FFFBEB;
+    --radius: 10px;
+    --mono: 'JetBrains Mono', monospace;
+  }
+
+  body {
+    font-family: 'Inter', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 40px 16px 80px;
+  }
+
+  .container { max-width: 720px; margin: 0 auto; }
+
+  header { margin-bottom: 32px; }
+  .eyebrow {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 8px;
+  }
+  h1 { font-size: 22px; font-weight: 600; color: var(--text); }
+  .subtitle { font-size: 14px; color: var(--muted); margin-top: 4px; }
+
+  /* ── Card ── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    margin-bottom: 16px;
+  }
+
+  label {
+    display: block;
+    font-size: 12px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+
+  /* ── Linha topo: perfil + ID ── */
+  .top-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+
+  input[type="text"], select {
+    width: 100%;
+    padding: 10px 12px;
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    background: var(--bg);
+    outline: none;
+    transition: border-color .15s;
+  }
+  input[type="text"]:focus,
+  select:focus { border-color: var(--accent); }
+
+  /* ── Textarea ── */
+  textarea {
+    width: 100%;
+    min-height: 130px;
+    padding: 12px;
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    resize: vertical;
+    color: var(--text);
+    background: var(--bg);
+    transition: border-color .15s;
+    outline: none;
+    margin-bottom: 14px;
+  }
+  textarea:focus { border-color: var(--accent); }
+
+  /* ── Botão full width ── */
+  button#btn {
+    width: 100%;
+    padding: 12px;
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    letter-spacing: .02em;
+    transition: opacity .15s;
+  }
+  button#btn:hover { opacity: .88; }
+  button#btn:disabled { opacity: .4; cursor: not-allowed; }
+
+  /* ── Section label ── */
+  .section-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+
+  /* ── Pipeline ── */
+  .pipeline { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+
+  .node {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    transition: border-color .2s;
+  }
+  .node.active { border-color: var(--accent); }
+  .node.done   { border-color: var(--border); }
+
+  .node-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+  }
+
+  .node-icon {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: var(--bg);
+    border: 1.5px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px;
+    flex-shrink: 0;
+    transition: all .2s;
+  }
+  .node.active .node-icon { background: var(--accent-light); border-color: var(--accent); }
+  .node.done   .node-icon { background: #F0FDF4; border-color: var(--green); color: var(--green); }
+
+  .node-meta { flex: 1; }
+  .node-name { font-size: 13px; font-weight: 500; }
+  .node-desc { font-size: 12px; color: var(--muted); margin-top: 1px; }
+
+  .node-badge {
+    font-size: 11px;
+    font-weight: 500;
+    padding: 2px 8px;
+    border-radius: 20px;
+  }
+  .badge-waiting { background: var(--bg);          color: var(--muted);  border: 1px solid var(--border); }
+  .badge-running { background: var(--accent-light); color: var(--accent); border: 1px solid #BFDBFE; }
+  .badge-done    { background: var(--green-bg);     color: var(--green);  border: 1px solid #BBF7D0; }
+
+  .node-progress { height: 2px; background: var(--border); overflow: hidden; }
+  .node-progress-bar { height: 100%; width: 0%; background: var(--accent); transition: width .3s ease; }
+  .node.active .node-progress-bar { animation: progress-run 2s ease-in-out infinite; }
+  .node.done   .node-progress-bar { width: 100%; background: var(--green); animation: none; }
+
+  @keyframes progress-run {
+    0%   { width: 0%;  margin-left: 0%; }
+    50%  { width: 60%; margin-left: 20%; }
+    100% { width: 0%;  margin-left: 100%; }
+  }
+
+  .node-detail {
+    padding: 0 16px;
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height .3s ease, padding .3s ease;
+  }
+  .node-detail.open { max-height: 600px; padding: 0 16px 14px; }
+
+  .detail-row {
+    display: flex;
+    gap: 8px;
+    font-size: 12px;
+    padding: 5px 0;
+    border-top: 1px solid var(--border);
+    align-items: baseline;
+  }
+  .detail-row:first-child { border-top: none; }
+  .detail-key { color: var(--muted); min-width: 110px; flex-shrink: 0; font-family: var(--mono); }
+  .detail-val { color: var(--text); word-break: break-word; }
+
+  .chunk-list { display: flex; flex-direction: column; gap: 4px; width: 100%; }
+  .chunk-item {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  /* ── Resultado ── */
+  .result-card {
+    border-radius: var(--radius);
+    padding: 20px 24px;
+    border: 1px solid;
+    display: none;
+    margin-bottom: 8px;
+  }
+  .result-card.approved { background: var(--green-bg); border-color: #BBF7D0; }
+  .result-card.rejected { background: var(--red-bg);   border-color: #FECACA; }
+  .result-card.escalate { background: var(--amber-bg); border-color: #FDE68A; }
+
+  .result-verdict { font-size: 16px; font-weight: 600; margin-bottom: 8px; }
+  .result-card.approved .result-verdict { color: var(--green); }
+  .result-card.rejected .result-verdict { color: var(--red); }
+  .result-card.escalate .result-verdict { color: var(--amber); }
+
+  .result-reason { font-size: 13px; color: var(--text); line-height: 1.65; margin-bottom: 12px; }
+
+  .result-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .meta-pill {
+    font-size: 11px;
+    font-family: var(--mono);
+    padding: 3px 10px;
+    border-radius: 20px;
+    background: rgba(255,255,255,.7);
+    border: 1px solid rgba(0,0,0,.08);
+    color: var(--text);
+  }
+
+  .docs-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--muted);
+    margin-bottom: 5px;
+  }
+  .doc-item { font-size: 12px; font-family: var(--mono); color: var(--muted); padding: 2px 0; }
+
+  .elapsed { font-size: 12px; color: var(--muted); text-align: right; margin-top: 4px; }
+
+  .error-card {
+    background: var(--red-bg);
+    border: 1px solid #FECACA;
+    border-radius: var(--radius);
+    padding: 14px 18px;
+    font-size: 13px;
+    color: var(--red);
+    display: none;
+    margin-bottom: 12px;
+  }
+
+  @media (max-width: 480px) {
+    .top-row { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="eyebrow">EY FSO · Compliance Checker</div>
+    <h1>Análise de Recomendação</h1>
+    <p class="subtitle">Submeta uma recomendação de investimento para análise automática via RAG + Agente.</p>
+  </header>
+
+  <!-- Form -->
+  <div class="card">
+    <div class="top-row">
+      <div>
+        <label for="profile">Perfil do cliente</label>
+        <select id="profile">
+          <option value="conservador">Conservador</option>
+          <option value="moderado">Moderado</option>
+          <option value="arrojado">Arrojado</option>
+        </select>
+      </div>
+      <div>
+        <label for="client_id">ID do cliente</label>
+        <input type="text" id="client_id" placeholder="ex: CLT001">
+      </div>
+    </div>
+
+    <label for="text">Texto da recomendação</label>
+    <textarea id="text" placeholder="Descreva a recomendação de investimento a ser analisada..."></textarea>
+
+    <button id="btn" onclick="runAnalysis()">Executar análise</button>
+  </div>
+
+  <!-- Pipeline -->
+  <div id="pipeline-section" style="display:none">
+    <div class="section-label">Fluxo do request</div>
+    <div class="pipeline">
+
+      <div class="node" id="node-analyze_document">
+        <div class="node-header">
+          <div class="node-icon">1</div>
+          <div class="node-meta">
+            <div class="node-name">analyze_document</div>
+            <div class="node-desc">RAG Fusion · ChromaDB · re-ranking · LLM</div>
+          </div>
+          <span class="node-badge badge-waiting" id="badge-analyze_document">aguardando</span>
+        </div>
+        <div class="node-progress"><div class="node-progress-bar" id="bar-analyze_document"></div></div>
+        <div class="node-detail" id="detail-analyze_document"></div>
+      </div>
+
+      <div class="node" id="node-decide">
+        <div class="node-header">
+          <div class="node-icon">2</div>
+          <div class="node-meta">
+            <div class="node-name">decide</div>
+            <div class="node-desc">Guardrail de confiança · decisão</div>
+          </div>
+          <span class="node-badge badge-waiting" id="badge-decide">aguardando</span>
+        </div>
+        <div class="node-progress"><div class="node-progress-bar" id="bar-decide"></div></div>
+        <div class="node-detail" id="detail-decide"></div>
+      </div>
+
+      <div class="node" id="node-take_action">
+        <div class="node-header">
+          <div class="node-icon">3</div>
+          <div class="node-meta">
+            <div class="node-name">take_action</div>
+            <div class="node-desc">move_file · create_alert</div>
+          </div>
+          <span class="node-badge badge-waiting" id="badge-take_action">aguardando</span>
+        </div>
+        <div class="node-progress"><div class="node-progress-bar" id="bar-take_action"></div></div>
+        <div class="node-detail" id="detail-take_action"></div>
+      </div>
+
+      <div class="node" id="node-log_result">
+        <div class="node-header">
+          <div class="node-icon">4</div>
+          <div class="node-meta">
+            <div class="node-name">log_result</div>
+            <div class="node-desc">Rastreio · OpenTelemetry</div>
+          </div>
+          <span class="node-badge badge-waiting" id="badge-log_result">aguardando</span>
+        </div>
+        <div class="node-progress"><div class="node-progress-bar" id="bar-log_result"></div></div>
+        <div class="node-detail" id="detail-log_result"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Resultado -->
+  <div class="result-card" id="result-card">
+    <div class="result-verdict" id="result-verdict"></div>
+    <div class="result-reason"  id="result-reason"></div>
+    <div class="result-meta"    id="result-meta"></div>
+    <div id="result-docs"></div>
+  </div>
+
+  <div class="elapsed"    id="elapsed"></div>
+  <div class="error-card" id="error-card"></div>
+
+</div>
+<script>
+const API   = 'http://localhost:8000/api/v1/analyze/agent';
+const NODES = ['analyze_document','decide','take_action','log_result'];
+
+function reset() {
+  NODES.forEach(n => {
+    document.getElementById(`node-${n}`).className = 'node';
+    const b = document.getElementById(`badge-${n}`);
+    b.className = 'node-badge badge-waiting';
+    b.textContent = 'aguardando';
+    document.getElementById(`detail-${n}`).className = 'node-detail';
+    document.getElementById(`detail-${n}`).innerHTML = '';
+    document.getElementById(`bar-${n}`).style.cssText = '';
+  });
+  const rc = document.getElementById('result-card');
+  rc.style.display = 'none'; rc.className = 'result-card';
+  document.getElementById('error-card').style.display = 'none';
+  document.getElementById('elapsed').textContent = '';
+  document.getElementById('pipeline-section').style.display = 'none';
+}
+
+function setActive(name) {
+  document.getElementById(`node-${name}`).classList.add('active');
+  const b = document.getElementById(`badge-${name}`);
+  b.className = 'node-badge badge-running';
+  b.textContent = 'processando';
+}
+
+function setDone(name, elapsed) {
+  const node = document.getElementById(`node-${name}`);
+  node.classList.remove('active'); node.classList.add('done');
+  node.querySelector('.node-icon').textContent = '✓';
+  const b = document.getElementById(`badge-${name}`);
+  b.className = 'node-badge badge-done';
+  b.textContent = elapsed ? `${elapsed}s` : 'concluído';
+}
+
+function openDetail(name, html) {
+  const d = document.getElementById(`detail-${name}`);
+  d.innerHTML = html; d.classList.add('open');
+}
+
+function row(key, val) {
+  return `<div class="detail-row"><span class="detail-key">${key}</span><span class="detail-val">${val}</span></div>`;
+}
+
+function detailAnalyze(analysis) {
+  if (!analysis) return '';
+  let h = '';
+  h += row('is_compliant', analysis.is_compliant
+    ? '<span style="color:var(--green);font-weight:500">true</span>'
+    : '<span style="color:var(--red);font-weight:500">false</span>');
+  h += row('confidence', `<span style="font-family:var(--mono);font-weight:500">${(analysis.confidence_score||0).toFixed(3)}</span>`);
+  h += row('risk_level', analysis.risk_level || '—');
+  const docs = analysis.source_documents || [];
+  if (docs.length) h += row('documentos', `<span style="font-family:var(--mono);font-size:11px">${docs.join(', ')}</span>`);
+  const chunks = analysis.source_chunk_ids || [];
+  if (chunks.length) {
+    h += row('chunks', `<div class="chunk-list">${chunks.map(c=>`<div class="chunk-item">${c}</div>`).join('')}</div>`);
+  }
+  return h;
+}
+
+function detailDecide(delta) {
+  const d = delta.decision || '—';
+  const c = {approved:'var(--green)',rejected:'var(--red)',escalate_human:'var(--amber)'}[d]||'var(--text)';
+  return row('decisão', `<span style="font-weight:600;color:${c}">${d}</span>`);
+}
+
+function detailAction(delta) {
+  return row('resultado', delta.action_result || '—');
+}
+
+function showResult(data) {
+  const analysis = data.analysis || {};
+  const decision = data.decision || '';
+  const card = document.getElementById('result-card');
+  const cls  = {approved:'approved',rejected:'rejected',escalate_human:'escalate'}[decision]||'';
+  card.className = `result-card ${cls}`;
+  document.getElementById('result-verdict').textContent = {
+    approved:       '✓ Recomendação conforme',
+    rejected:       '✗ Recomendação não conforme',
+    escalate_human: '⚠ Escalado para revisão humana',
+  }[decision] || decision;
+  document.getElementById('result-reason').textContent = analysis.reason || '—';
+  document.getElementById('result-meta').innerHTML = [
+    `confidence: ${(analysis.confidence_score||0).toFixed(3)}`,
+    `risco: ${analysis.risk_level||'—'}`,
+    `perfil: ${analysis.client_profile||'—'}`,
+    `arquivo: ${data.file_name||'—'}`,
+  ].map(t=>`<span class="meta-pill">${t}</span>`).join('');
+  const docs = analysis.source_documents || [];
+  document.getElementById('result-docs').innerHTML = docs.length
+    ? `<div class="docs-label">Documentos consultados</div>${docs.map(d=>`<div class="doc-item">· ${d}</div>`).join('')}`
+    : '';
+  card.style.display = 'block';
+}
+
+async function runAnalysis() {
+  const text = document.getElementById('text').value.trim();
+  const profile = document.getElementById('profile').value;
+  const clientId = document.getElementById('client_id').value.trim() || `web_${Date.now()}`;
+  if (!text) { alert('Informe o texto da recomendação.'); return; }
+
+  reset();
+  document.getElementById('btn').disabled = true;
+  document.getElementById('pipeline-section').style.display = 'block';
+  setActive('analyze_document');
+
+  try {
+    const resp = await fetch(API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, client_profile: profile, client_id: clientId }),
+    });
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop();
+
+      for (const part of parts) {
+        if (!part.trim()) continue;
+        const em = part.match(/^event:\s*(.+)$/m);
+        const dm = part.match(/^data:\s*(.+)$/ms);
+        if (!em || !dm) continue;
+        const evt = em[1].trim();
+        let data;
+        try { data = JSON.parse(dm[1].trim()); } catch { continue; }
+
+        if (evt === 'node_complete') {
+          const name = data.node;
+          const idx  = NODES.indexOf(name);
+          setDone(name, data.elapsed);
+          if (name === 'analyze_document') openDetail(name, detailAnalyze(data.state?.analysis));
+          if (name === 'decide')           openDetail(name, detailDecide(data.delta));
+          if (name === 'take_action')      openDetail(name, detailAction(data.delta));
+          if (idx >= 0 && idx < NODES.length - 1) setActive(NODES[idx + 1]);
+        }
+        if (evt === 'done') {
+          document.getElementById('elapsed').textContent = `Concluído em ${data.total_elapsed}s`;
+          showResult(data);
+        }
+        if (evt === 'error') {
+          const ec = document.getElementById('error-card');
+          ec.textContent = `Erro: ${data.message}`;
+          ec.style.display = 'block';
+        }
+      }
+    }
+  } catch (err) {
+    const ec = document.getElementById('error-card');
+    ec.textContent = `Erro de conexão: ${err.message}. Verifique se o servidor está rodando.`;
+    ec.style.display = 'block';
+  } finally {
+    document.getElementById('btn').disabled = false;
+  }
+}
+</script>
+</body>
+</html>

@@ -60,8 +60,9 @@ def analyze(request: AnalysisRequest) -> AnalysisResult:
     status_code=status.HTTP_200_OK,
     summary="Analisar via agente autônomo com rastreio em tempo real",
     description=(
-        "Grava a requisição em data/input/, dispara o agente LangGraph e "
-        "transmite o estado de cada nó via Server-Sent Events conforme executa. "
+        "Grava a requisição em data/input/, reserva o arquivo (.processing), "
+        "dispara o agente LangGraph e transmite o estado de cada nó via "
+        "Server-Sent Events conforme executa. "
         "Eventos: analyze_document · decide · take_action · log_result · done · error"
     ),
     response_class=StreamingResponse,
@@ -70,11 +71,12 @@ def analyze_agent(request: AnalysisRequest):
     """
     Fluxo:
         1. Serializa o request em data/input/req_<timestamp>.json
-        2. Dispara graph.stream() com o caminho do arquivo
-        3. Emite um evento SSE por nó concluído
-        4. Emite evento final 'done' com o estado completo
+        2. Reserva o arquivo renomeando para .processing (evita colisão com o monitor)
+        3. Dispara graph.stream() com o caminho reservado
+        4. Emite um evento SSE por nó concluído
+        5. Emite evento final 'done' com o estado completo
     """
-    # 1. Grava o arquivo em data/input/ — o mesmo formato que o monitor espera
+    # 1. Grava o arquivo em data/input/
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     file_name = f"req_{timestamp}.json"
     file_path = INPUT_DIR / file_name
@@ -95,39 +97,49 @@ def analyze_agent(request: AnalysisRequest):
             detail=f"Falha ao gravar arquivo de entrada: {exc}",
         ) from exc
 
-    # 2. Gerador SSE — cada yield é um evento enviado ao cliente
+    # 2. Reserva o arquivo atomicamente — mesmo mecanismo do monitor
+    #    Evita que o monitor consuma o arquivo enquanto o endpoint o processa.
+    reserved_path = file_path.with_suffix(".processing")
+    try:
+        file_path.rename(reserved_path)
+        logger.info(f"[analyze/agent] Arquivo reservado: {reserved_path.name}")
+    except Exception as exc:
+        # Se o rename falhar (corrida muito improvável), aborta com erro claro
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Falha ao reservar arquivo de entrada: {exc}",
+        ) from exc
+
+    # 3. Gerador SSE — cada yield é um evento enviado ao cliente
     def event_stream():
         graph = build_agent()
         initial_state = {
-            "file_path":     str(file_path),
+            "file_path":     str(reserved_path),
             "analysis":      None,
             "decision":      None,
             "action_result": None,
             "error":         None,
         }
 
-        # Rastreio: acumula o estado completo nó a nó
         accumulated_state = dict(initial_state)
         start = time.time()
 
         try:
             for step in graph.stream(initial_state):
-                # step = {"nome_do_no": {campos alterados}}
                 node_name, state_delta = next(iter(step.items()))
                 if state_delta:
                     accumulated_state.update(state_delta)
 
                 event = {
-                    "node":     node_name,
-                    "delta":    state_delta,
-                    "state":    accumulated_state,
-                    "elapsed":  round(time.time() - start, 3),
+                    "node":    node_name,
+                    "delta":   state_delta,
+                    "state":   accumulated_state,
+                    "elapsed": round(time.time() - start, 3),
                 }
 
                 logger.info(f"[analyze/agent] nó concluído: {node_name} ({event['elapsed']}s)")
                 yield _sse("node_complete", event)
 
-            # Evento final com estado consolidado e duração total
             done_event = {
                 "file_name":     file_name,
                 "decision":      accumulated_state.get("decision"),
@@ -139,14 +151,20 @@ def analyze_agent(request: AnalysisRequest):
 
         except Exception as exc:
             logger.exception(f"[analyze/agent] Erro durante streaming: {exc}")
+            # Devolve o arquivo pra fila se o agente falhar no meio do caminho
+            if reserved_path.exists():
+                try:
+                    reserved_path.rename(file_path)
+                except Exception:
+                    pass
             yield _sse("error", {"message": str(exc), "file": file_name})
 
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control":    "no-cache",
-            "X-Accel-Buffering": "no",   # desativa buffer do nginx se houver proxy
+            "Cache-Control":     "no-cache",
+            "X-Accel-Buffering": "no",
         },
     )
 
