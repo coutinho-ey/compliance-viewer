@@ -71,7 +71,7 @@ def analyze_compliance(file_path: str) -> dict:
     result: AnalysisResult = analyze_recommendation(request)
 
     output = result.model_dump()
-    output["file_name"]      = path.name
+    output["file_name"]      = path.with_suffix(".json").name  # sempre .json
     output["client_id"]      = payload["client_id"]
     output["client_profile"] = payload["client_profile"]
 
@@ -91,6 +91,7 @@ def move_file(file_path: str, destination: str) -> str:
     Retorna o caminho final do arquivo movido.
     """
     path = Path(file_path)
+    final_name = path.with_suffix(".json").name  # garante extensão .json no destino
 
     if destination == "approved":
         dest_dir = OUTPUT_APPROVED
@@ -101,10 +102,10 @@ def move_file(file_path: str, destination: str) -> str:
             f"Destino inválido: '{destination}'. Use 'approved' ou 'rejected_for_review'."
         )
 
-    dest_path = dest_dir / path.name
+    dest_path = dest_dir / final_name
     shutil.move(str(path), str(dest_path))
 
-    logger.info(f"[move_file] {path.name} → {dest_dir.name}/")
+    logger.info(f"[move_file] {path.name} → {dest_dir.name}/{final_name}")
     return str(dest_path)
 
 

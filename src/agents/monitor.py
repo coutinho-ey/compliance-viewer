@@ -25,8 +25,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ── Configurações ──────────────────────────────────────────────────────────────
-INPUT_DIR      = Path("data/input")
-POLL_INTERVAL  = 5   # segundos entre cada varredura da pasta
+INPUT_DIR     = Path("data/input")
+POLL_INTERVAL = 5  # segundos entre cada varredura da pasta
 
 
 # ── Monitor ────────────────────────────────────────────────────────────────────
@@ -34,30 +34,37 @@ POLL_INTERVAL  = 5   # segundos entre cada varredura da pasta
 def monitor():
     """
     Loop principal: varre data/input/ a cada POLL_INTERVAL segundos.
-    Para cada .json encontrado, dispara o agente e aguarda o resultado.
-    Arquivos processados são movidos pelo próprio agente — não ficam em input/.
+
+    Para cada .json encontrado, reserva o arquivo renomeando para .processing
+    antes de chamar o agente — evita colisão com o endpoint /analyze/agent
+    que pode ter gravado e já consumido o mesmo arquivo via graph.stream().
+
+    Se o agente falhar, o arquivo é devolvido para a fila (.processing → .json).
     """
     INPUT_DIR.mkdir(parents=True, exist_ok=True)
     logger.info(f"Monitor iniciado. Vigiando: {INPUT_DIR.resolve()}")
     logger.info(f"Intervalo de varredura: {POLL_INTERVAL}s. Ctrl+C para parar.")
 
     while True:
-        arquivos = sorted(INPUT_DIR.glob("*.json"))
+        for arquivo in sorted(INPUT_DIR.glob("*.json")):
+            reservado = arquivo.with_suffix(".processing")
+            try:
+                arquivo.rename(reservado)
+            except Exception:
+                # Outro processo já consumiu ou renomeou — ignora silenciosamente
+                continue
 
-        if arquivos:
-            for arquivo in arquivos:
-                logger.info(f"Novo arquivo detectado: {arquivo.name}")
-                try:
-                    estado_final = run_agent(str(arquivo))
-                    logger.info(
-                        f"Agente concluído | arquivo={arquivo.name} | "
-                        f"decisão={estado_final.get('decision')} | "
-                        f"resultado={estado_final.get('action_result', '')}"
-                    )
-                except Exception as exc:
-                    logger.error(f"Erro ao processar {arquivo.name}: {exc}")
-        else:
-            logger.debug("Nenhum arquivo em data/input/. Aguardando...")
+            logger.info(f"Novo arquivo detectado: {arquivo.name}")
+            try:
+                estado_final = run_agent(str(reservado))
+                logger.info(
+                    f"Agente concluído | arquivo={arquivo.name} | "
+                    f"decisão={estado_final.get('decision')} | "
+                    f"resultado={estado_final.get('action_result', '')}"
+                )
+            except Exception as exc:
+                logger.error(f"Erro ao processar {arquivo.name}: {exc}")
+                reservado.rename(arquivo)  # devolve pra fila se o agente falhar
 
         time.sleep(POLL_INTERVAL)
 
